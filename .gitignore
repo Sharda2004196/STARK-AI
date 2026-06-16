@@ -1,0 +1,58 @@
+# Environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# API Keys and Secrets
+config/api_keys.json
+.env
+*.env
+.env.local
+.env.*.local
+
+# Personal Memory and Data
+memory/long_term.json
+memory/*.json
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Thumbs.db.bak
+
+# Log files
+*.log
+
+# Build / Output / Temporaries
+Desktop/JarvisFrontends/
+Desktop/JarvisOptimizedPrompts/
+build/
+dist/
+*.egg-info/
+
+# Agent & Tool Metadata
+.gemini/
+.claude/
+Gemini.md
+
+# Local Activation Scripts (Requested by user)
+RUN_JARVIS_ACTIVATION.bat
+ultimate_smart_action.py
+gha-creds-*.json

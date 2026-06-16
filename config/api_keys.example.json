@@ -1,0 +1,6 @@
+{
+    "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+    "opencode_zen_api_key": "YOUR_OPENCODE_ZEN_API_KEY_HERE (Optional)",
+    "composio_api_key": "YOUR_COMPOSIO_API_KEY_HERE (Optional)",
+    "os_system": "windows"
+}
