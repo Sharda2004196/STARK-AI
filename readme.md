@@ -5,6 +5,8 @@
 
 STARK AI (J.A.R.V.I.S) is a state-of-the-art, autonomous, multi-modal AI assistant. It bridges the gap between digital intent and real-world action by integrating high-fidelity voice, computer vision, and deep system-level automation.
 
+![STARK AI Screenshot](assets/STARK_AI_Screenshot.png)
+
 ---
 
 ## 📖 Table of Contents
