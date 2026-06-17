@@ -46,6 +46,8 @@ Desktop/JarvisOptimizedPrompts/
 build/
 dist/
 *.egg-info/
+*.task
+hand_landmarker.task
 
 # Agent & Tool Metadata
 .gemini/

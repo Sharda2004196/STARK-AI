@@ -296,18 +296,3 @@ Rules:
         error_msg = f"APK generation failed: {e}"
         print(f"[APKBuilder] {error_msg}")
         return error_msg
-ummary[:1000]}"
-                if player: 
-                    player.write_log("Compilation failed. Check error logs below.")
-                    print(f"[APKBuilder] Gradle Error:\n{error_summary}")
-
-        except Exception as compile_err:
-            msg += f"\n(Auto-compile attempt failed: {compile_err})"
-            if player: player.write_log(f"Error during compilation attempt: {compile_err}")
-
-        return msg
-
-    except Exception as e:
-        error_msg = f"APK generation failed: {e}"
-        print(f"[APKBuilder] {error_msg}")
-        return error_msg

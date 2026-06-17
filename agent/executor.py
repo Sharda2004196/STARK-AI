@@ -165,7 +165,7 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         print(f"[Executor] ⚠️ Translation failed: {e}")
         return content
 
-def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
+def _call_tool(tool: str, parameters: dict, speak: Callable | None, **kwargs) -> str:
 
     if tool == "open_app":
         from actions.open_app import open_app
@@ -248,6 +248,11 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         from actions.flight_finder import flight_finder
         return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
 
+    elif tool == "gesture_control":
+        from actions.gesture_control import gesture_control
+        # Pass kwargs to capture player/main session context
+        return gesture_control(parameters=parameters, player=kwargs.get("player") or None)
+
     else:
         print(f"[Executor] ⚠️ Unknown tool '{tool}' — falling back to generated_code")
         return _run_generated_code(f"Accomplish this task: {parameters}", speak=speak)
@@ -255,6 +260,9 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
 class AgentExecutor:
 
     MAX_REPLAN_ATTEMPTS = 2
+
+    def __init__(self, player=None):
+        self.player = player
 
     def execute(
         self,
@@ -302,7 +310,7 @@ class AgentExecutor:
                     if cancel_flag and cancel_flag.is_set():
                         break
                     try:
-                        result = _call_tool(tool, params, speak)
+                        result = _call_tool(tool, params, speak, player=self.player)
                         step_results[step_num] = result 
                         completed_steps.append(step)
                         print(f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}")
@@ -345,7 +353,8 @@ class AgentExecutor:
                                     res = _call_tool(
                                         fixed_step["tool"],
                                         fixed_step["parameters"],
-                                        speak
+                                        speak,
+                                        player=self.player
                                     )
                                     step_results[step_num] = res
                                     completed_steps.append(step)

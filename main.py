@@ -38,6 +38,7 @@ from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
+from actions.gesture_control   import gesture_control
 from actions.composio_tools    import JarvisToolManager
 from actions.video_editing     import video_editing
 from actions.doc_creator       import doc_creator
@@ -580,6 +581,17 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "gesture_control",
+        "description": "Enables or disables controlling the computer via hand gestures using the webcam.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "start | stop | status"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "shutdown_jarvis",
         "description": (
             "Shuts down the assistant completely. "
@@ -920,6 +932,10 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
 
+            elif name == "gesture_control":
+                r = await loop.run_in_executor(None, lambda: gesture_control(parameters=args, player=self.ui))
+                result = r or "Done."
+
             elif name == "content_studio":
                 if not args.get("image_path") and self.ui.current_file:
                     args["image_path"] = self.ui.current_file
@@ -1029,7 +1045,6 @@ class JarvisLive:
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
-            self.speak_error(name, e)
 
         finally:
             self.set_speaking(False)

@@ -131,6 +131,10 @@ doc_creator
   image_path: string (optional) — path to a reference image
   NOTE: Use for ANY request to create presentations, spreadsheets, documents, posters, infographics, or logos.
 
+gesture_control
+  action: "start" | "stop" | "status" (required)
+  NOTE: Use for controlling the computer via hand gestures.
+
 code_helper
   action: "write" | "edit" | "run" | "explain" (required)
   description: string (required)

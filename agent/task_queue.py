@@ -49,6 +49,8 @@ class TaskQueue:
     def _get_executor(self):
         if self._executor is None:
             from agent.executor import AgentExecutor
+            # ponytail: task_queue is global and doesn't have player reference easily.
+            # We will rely on executor defaults or future injection.
             self._executor = AgentExecutor()
         return self._executor
 

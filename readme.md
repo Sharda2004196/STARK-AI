@@ -93,6 +93,18 @@ J.A.R.V.I.S utilizes over 16 specialized automation modules:
 
 ## ⚙️ Advanced Setup Deep-Dive
 
+### 🖐️ AI Gesture Control (Vision Mode)
+Transform your hand into a high-precision digital controller. Use the webcam to navigate your OS with low-latency tracking and AI-driven recognition.
+*   **The Tech Stack:** Powered by `cvzone` and `MediaPipe` for 21-point hand landmark detection. It processes frames in a dedicated background thread, ensuring JARVIS remains responsive while you control the PC.
+*   **High Precision & Smoothing:** Implements a snappy exponential moving average filter to eliminate cursor jitter, providing a "liquid" feel similar to a high-end trackpad.
+*   **Tactical HUD Feedback:** JARVIS opens a dedicated "Gesture Vision" window with a real-time HUD. It draws a digital skeleton over your hand and provides visual color confirmation (Green/Blue glows) when clicks are registered.
+*   **Full Gesture Mapping:**
+    - **Cursor Movement:** Use your **Index Finger** as the pointer (the HUD will track the tip).
+    - **Left Click:** Perform a **Pinch** gesture with your Index Finger and Thumb.
+    - **Right Click:** Perform a **Pinch** gesture with your Middle Finger and Thumb.
+    - **Smart Scroll:** Hold your **Index and Middle** fingers together and move your hand vertically to scroll through pages or lists.
+    - **Instant Minimize (Fist):** Close your hand into a **Fist** to instantly minimize all open windows (`Win+D`). This is the fastest way to clear your screen without searching for the minimize button.
+
 ### 📱 Wireless Mobile Control (UIAutomator2)
 The mobile control module provides structural, high-level interaction with your Android phone.
 *   **Under the Hood:** J.A.R.V.I.S installs a lightweight ATX Agent on the phone (`uiautomator2`). This agent converts high-level Python commands (`click("Call")`) into UI actions, bypassing the need for manual coordinate guessing.

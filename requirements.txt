@@ -13,6 +13,8 @@ pyperclip
 pygetwindow       
 opencv-python
 numpy
+cvzone
+mediapipe
 mss
 Pillow
 psutil
