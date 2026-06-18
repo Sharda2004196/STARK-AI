@@ -53,6 +53,7 @@ hand_landmarker.task
 .gemini/
 .claude/
 Gemini.md
+whatsapp_shortcuts.md
 
 # Local Activation Scripts (Requested by user)
 RUN_JARVIS_ACTIVATION.bat

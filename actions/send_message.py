@@ -152,14 +152,61 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
 def _send_whatsapp(receiver: str, message: str) -> str:
     return _desktop_send("WhatsApp", receiver, message)
 
-def _whatsapp_call(receiver: str) -> str:
+def _whatsapp_call(receiver: str, call_type: str = "voice") -> str:
     if not _open_app("WhatsApp"):
         return "Could not open WhatsApp Desktop."
-    time.sleep(1.0)
+    
+    time.sleep(0.5)
     _search_in_app(receiver)
+    
+    time.sleep(0.3)
+    pyautogui.press("down")
+    time.sleep(0.1)
     pyautogui.press("enter")
+    
+    os_name = _get_os()
+    
+    if os_name == "windows":
+        try:
+            import uiautomation as auto
+            print(f"[SendMessage] Using UIAutomation to locate {call_type.capitalize()} call button...")
+            wa_window = auto.WindowControl(searchDepth=1, Name="WhatsApp")
+            if wa_window.Exists(2, 0.2):
+                wa_window.SetFocus()
+                
+                # Determine which button names to look for
+                target_names = ["Video call", "Video"] if call_type == "video" else ["Voice call", "Audio call", "Call"]
+                
+                for btn_name in target_names:
+                    btn = wa_window.ButtonControl(Name=btn_name)
+                    # Dynamic wait: will wait UP TO 2 seconds, but proceed instantly if found
+                    if btn.Exists(2, 0.2):
+                        btn.Click()
+                        return f"WhatsApp {call_type} call initiated with {receiver} via native UI."
+                    
+            print("[SendMessage] UIAutomation failed to find the button. Falling back to hotkeys.")
+        except ImportError:
+            print("[SendMessage] uiautomation not installed. Run: pip install uiautomation")
+        except Exception as e:
+            print(f"[SendMessage] UIAutomation error: {e}")
+
+    # Fallback delays
     time.sleep(1.0)
-    return f"WhatsApp Desktop opened and searched for {receiver}, sir. Please click the call button manually to initiate."
+    if call_type == "video":
+        call_hotkey = ("command", "shift", "v") if os_name == "mac" else ("ctrl", "shift", "v")
+    else:
+        call_hotkey = ("command", "shift", "c") if os_name == "mac" else ("ctrl", "shift", "c")
+        
+    pyautogui.hotkey(*call_hotkey)
+    time.sleep(0.5)
+    
+    for _ in range(4 if call_type == "video" else 3):
+        pyautogui.hotkey("shift", "tab")
+        time.sleep(0.1)
+    pyautogui.press("enter")
+    time.sleep(0.5)
+    
+    return f"WhatsApp {call_type} call initiated with {receiver}, sir. (Multiple methods attempted)"
 
 def _send_telegram(receiver: str, message: str) -> str:
     return _desktop_send("Telegram", receiver, message)
@@ -236,7 +283,7 @@ def _resolve_platform(platform_str: str, is_call: bool = False):
     for keywords, send_handler, call_handler in _PLATFORM_MAP:
         if any(k in key for k in keywords):
             if is_call:
-                return call_handler or (lambda r: f"Voice calls not yet automated for {platform_str}.")
+                return call_handler or (lambda r, t: f"Calls not yet automated for {platform_str}.")
             return send_handler
     return lambda r, m: _desktop_send(platform_str.strip().title(), r, m)
 
@@ -255,7 +302,9 @@ def send_message(
     if not receiver:
         return "Please specify a recipient."
     
-    is_call = (action == "call")
+    is_call = action in ("call", "voice_call", "video_call")
+    call_type = "video" if action == "video_call" else "voice"
+    
     if not is_call and not message_text:
         return "Please specify the message content."
 
@@ -269,7 +318,7 @@ def send_message(
     try:
         handler = _resolve_platform(platform, is_call=is_call)
         if is_call:
-            result = handler(receiver)
+            result = handler(receiver, call_type)
         else:
             result = handler(receiver, message_text)
     except Exception as e:

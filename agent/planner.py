@@ -75,8 +75,10 @@ screen_process
 
 send_message
   receiver: string (required)
-  message_text: string (required)
+  message_text: string (optional, required if action is 'send')
   platform: string (required)
+  action: "send" | "call" | "voice_call" | "video_call" (optional, default: "send")
+  NOTE: Use "call" or "voice_call" for WhatsApp voice calls, and "video_call" for video calls. Do NOT use computer_control for WhatsApp calls.
 
 reminder
   date: string YYYY-MM-DD (required)

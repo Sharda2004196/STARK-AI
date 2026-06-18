@@ -24,6 +24,7 @@ win10toast
 send2trash
 youtube-transcript-api
 pywinauto
+uiautomation
 python-pptx
 openpyxl
 python-docx
