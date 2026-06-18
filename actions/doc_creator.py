@@ -1357,6 +1357,10 @@ def _create_pdf(plan: dict, output_path: Path, image_ref: Path = None) -> str:
     # ── Body pages ────────────────────────────────────────────────────────
     sections = plan.get("sections", [])
 
+    # Ensure at least one page exists before rendering body content
+    if not cover:
+        pdf.add_page()
+
     for section in sections:
         # Check if we need a new page
         if pdf.get_y() > 240:
@@ -1503,7 +1507,7 @@ def _create_pdf(plan: dict, output_path: Path, image_ref: Path = None) -> str:
                     pdf.set_font(font_family, "", 9)
                     pdf.set_text_color(*muted_rgb)
                     pdf.cell(card_w, 8, card.get("label", ""), align="C")
-                pdf.set_y(y_start + 48)
+                pdf.set_xy(pdf.l_margin, y_start + 48)
 
         elif sec_type == "callout":
             # Highlighted callout box with accent-tinted background

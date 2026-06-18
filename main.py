@@ -156,12 +156,12 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "generate_image",
-        "description": "Generates high-fidelity static graphics using Imagen 3. Do NOT use this if the user asks for music, beats, or songs.",
+        "description": "Generates high-fidelity static graphics using Pollinations FLUX. By DEFAULT always use aspect_ratio='1:1' (square). Only use 16:9 or 9:16 if the user EXPLICITLY asks for widescreen, cinematic, or mobile wallpaper.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "prompt": {"type": "STRING", "description": "Detailed description of the image"},
-                "aspect_ratio": {"type": "STRING", "description": "1:1 | 3:4 | 4:3 | 16:9 | 9:16"}
+                "aspect_ratio": {"type": "STRING", "description": "1:1 (default, square) | 3:4 | 4:3 | 16:9 (only if user asks) | 9:16 (only if user asks)"}
             },
             "required": ["prompt"]
         }
@@ -619,7 +619,9 @@ TOOL_DECLARATIONS = [
         "video (trim/extract_audio/extract_frame/compress/transcribe/info), "
         "archives (list/extract), "
         "presentations (summarize/extract_text). "
-        "ALWAYS call this tool when a file has been uploaded and the user gives a command about it. "
+        "NOTE: This tool does NOT convert documents (docx/txt) to PDF. "
+        "For document-to-PDF conversion, creating PDFs, or generating any professional documents, "
+        "use the 'doc_creator' tool instead (especially if the user mentions 'doc_creator' explicitly). "
         "If the user's command is ambiguous, pick the most logical action for that file type."
     ),
     "parameters": {
@@ -673,17 +675,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "doc_creator",
         "description": (
-            "Creates professional documents, presentations, spreadsheets, posters, infographics, and logos "
-            "from a text description. Supports: pptx (presentations), xlsx (spreadsheets), "
-            "docx (Word documents), poster (high-res images), infographic (data visualizations), "
-            "logo (branded logos). Can use an image reference."
+            "Creates professional documents, presentations, spreadsheets, PDFs, posters, infographics, and logos. "
+            "ALSO converts existing uploaded files (like .docx, .txt, .md) into PDF format. "
+            "Supports: pptx (presentations), xlsx (spreadsheets), "
+            "docx (Word documents), pdf (PDF from uploaded file or from scratch), "
+            "poster (high-res images), infographic (data visualizations), "
+            "logo (branded logos). Can use an image/file reference via image_path. "
+            "Use this tool when the user explicitly asks for 'doc_creator', 'document creator', "
+            "wants to convert a file to PDF, or create any document from scratch."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "prompt":    {"type": "STRING",  "description": "Detailed description of what to create (e.g. 'Create a presentation about climate change')"},
-                "doc_type":  {"type": "STRING",  "description": "pptx | xlsx | docx | poster | infographic | logo (optional, auto-detected from prompt)"},
-                "image_path": {"type": "STRING", "description": "Optional path to a reference image to include in the document"}
+                "prompt":    {"type": "STRING",  "description": "Describe what to create or convert (e.g. 'Convert this docx to PDF', 'Create a presentation about climate change')"},
+                "doc_type":  {"type": "STRING",  "description": "pptx | xlsx | docx | pdf | poster | infographic | logo (optional, auto-detected from prompt)"},
+                "image_path": {"type": "STRING", "description": "Path to an uploaded file to convert to PDF, or a reference image to include in the document"}
             },
             "required": ["prompt"]
         }
@@ -993,6 +999,16 @@ class JarvisLive:
                     lambda: JarvisToolManager().execute_task(args.get("task", ""))
                 )
                 result = r or "Cloud task executed."
+
+            elif name == "generate_image":
+                prompt = args.get("prompt", "")
+                aspect_ratio = args.get("aspect_ratio", "1:1")
+                engine = JarvisImageEngine()
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: engine.generate(prompt=prompt, aspect_ratio=aspect_ratio)
+                )
+                result = r or "Image generated."
 
             elif name == "doc_creator":
                 if not args.get("image_path") and self.ui.current_file:

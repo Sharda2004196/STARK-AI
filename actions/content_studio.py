@@ -379,15 +379,20 @@ if __name__ == "__main__":
         if temp_html.exists(): temp_html.unlink()
         if temp_py.exists(): temp_py.unlink()
 
-def create_professional_carousel(slides: list[dict], base_save_dir: Path) -> str:
+def create_professional_carousel(slides: list, base_save_dir: Path) -> str:
     """
     Helper to render multiple carousel slides into a subfolder.
+    Handles both dict slides ({"title": ..., "body": ...}) and plain string slides.
     """
     total = len(slides)
     results = []
     for i, slide in enumerate(slides):
-        title = slide.get("title", f"Step {i+1}")
-        body = slide.get("body", "")
+        if isinstance(slide, str):
+            title = f"Step {i+1}"
+            body = slide
+        else:
+            title = slide.get("title", f"Step {i+1}")
+            body = slide.get("body", "")
         output_file = base_save_dir / f"slide_{i+1}.jpg"
         try:
             render_carousel_slide(title, body, i, total, output_file)
@@ -450,6 +455,9 @@ async def run_studio(user_goal: str, user_image_path: Path = None) -> str:
     save_dir.mkdir(parents=True, exist_ok=True)
 
     for task in tasks:
+        if isinstance(task, str):
+            print(f"[Studio] ⚠️ Skipping string task: {task[:50]}...")
+            continue
         t_type = task.get("type")
         if t_type == "thumbnail":
             out = save_dir / "youtube_thumbnail.jpg"
@@ -462,6 +470,8 @@ async def run_studio(user_goal: str, user_image_path: Path = None) -> str:
             production_logs.append(f"- Thumbnail created: {out.name}")
         elif t_type == "carousel":
             slides = task.get("slides", [])
+            if not isinstance(slides, list):
+                slides = []
             file_list = create_professional_carousel(slides, save_dir)
             production_logs.append(f"- Carousel created: {len(slides)} slides ({file_list})")
 
@@ -478,6 +488,7 @@ def content_studio(
     response=None,
     player=None,
     session_memory=None,
+    speak=None,
 ) -> str:
     """
     Jarvis Tool: Content Creation Studio (Pure Playwright Designer).

@@ -252,6 +252,17 @@ def _process_text_doc(path: Path, file_type: str, action: str,
                        params: dict, speak=None) -> str:
     action = action or "summarize"
 
+    # Handle convert-to-PDF action early — redirect to doc_creator before any file read
+    if action == "convert":
+        fmt = (params.get("format") or "").lower().strip(".")
+        if fmt == "pdf":
+            return (
+                "To convert this document to PDF, please use the 'doc_creator' tool instead. "
+                "Call doc_creator with prompt='Convert this file to PDF' and "
+                f"image_path='{path}'"
+            )
+        return f"FileProcessor does not support converting documents to {fmt}. Use doc_creator for document-to-PDF conversion, or extract_text to get the content."
+
     def _read_content() -> str:
         if file_type == "docx":
             try:
