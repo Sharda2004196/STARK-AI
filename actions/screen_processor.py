@@ -60,7 +60,7 @@ def _get_os() -> str:
     return _load_config().get("os_system", "windows").lower()
 
 # Using 2.5 Flash for state-of-the-art high-precision snapshot reasoning
-_ANALYSIS_MODEL = "gemini-2.5-flash"
+_ANALYSIS_MODEL = "gemini-3.1-flash-lite"
 _IMG_MAX_W = 1280
 _IMG_MAX_H = 720
 _JPEG_Q    = 95
@@ -119,6 +119,7 @@ def screen_process(
     player=None,
     session_memory=None,
     set_speaking_cb: Optional[Callable[[bool], None]] = None,
+    speak: Optional[Callable[[str], None]] = None,
 ) -> bool:
     """
     SIMPLE HIGH-PRECISION VERSION:
@@ -153,27 +154,21 @@ def screen_process(
 
         analysis = response.text.strip()
         
-        # 3. Deliver result through JARVIS's main brain
+        # 3. Log the full analysis (visible in terminal/logs)
         if player: 
             player.write_log(f"Jarvis: {analysis}")
-            print(f"[Vision] Result: {analysis}")
-            
-        # We manually trigger the main JARVIS speak method if available via the player
-        # Or we let the tool result handle it. 
-        # Since this runs in a thread, we use player.parent (JarvisLive) if possible
-        # but for maximum stability, we just use a local speak helper.
+        print(f"[Vision] Result: {analysis}")
         
-        def _speak_result():
-            if set_speaking_cb: set_speaking_cb(True)
-            # We don't have a direct 'speak' here, but the result returned 
-            # to main.py will be handled by the Live API naturally.
-            if set_speaking_cb: time.sleep(0.1) # small delay to let UI update
-
-        _speak_result()
+        # 4. Extract a brief spoken summary (first sentence, capped for speech)
+        brief = analysis.split('.')[0].strip()
+        if len(brief) < 10:  # if first sentence is too short, take more
+            brief = analysis[:200].rsplit('.', 1)[0].strip()
+        # Truncate at word boundary only if we exceed 150 chars
+        if len(brief) > 150:
+            brief = brief[:150].rsplit(' ', 1)[0]
         
-        # Return the actual answer as the tool result!
-        # This makes the Live model speak it as its own response.
-        return analysis
+        # Return only the brief summary for Gemini to speak
+        return brief
 
     except Exception as e:
         err = f"Vision analysis failed: {str(e)}"

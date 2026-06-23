@@ -3,132 +3,574 @@
 ### The Ultimate Cross-Platform Personal AI Assistant
 **Developed by Sharda Vatsal Bhat (SVB)**
 
-STARK AI (J.A.R.V.I.S) is a state-of-the-art, autonomous, multi-modal AI assistant. It bridges the gap between digital intent and real-world action by integrating high-fidelity voice, computer vision, and deep system-level automation.
+STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Google Gemini Live API** with bidirectional audio streaming. It sees your screen, controls your computer, manages files, builds apps, writes code, sends messages, and much more — all through natural voice conversation.
 
 ![STARK AI Screenshot](assets/STARK_AI_Screenshot.png)
 
 ---
 
-## 📖 Table of Contents
-1. [Overview](#-overview)
-2. [Architecture](#-architecture)
-3. [Comprehensive Tool Module Documentation](#-comprehensive-tool-module-documentation)
-4. [Getting Started & Configuration](#-getting-started--configuration)
-5. [Advanced Setup Deep-Dive](#-advanced-setup-deep-dive)
-6. [Security & Risk Disclaimer](#-security--risk-disclaimer)
-7. [Support & Credits](#-support--credits)
+## ✨ Features
+
+### 🗣️ Voice Interface
+- Real-time bidirectional audio streaming via Gemini Live API
+- Automatic speech detection with push-to-talk mode
+- Wake-word free — just start speaking after connection
+- Voice activity-based muting (audio paused during tool execution)
+- Configurable microphone and speaker devices
+
+### 🤖 25+ Action Modules
+
+| Category | Action | Description |
+|----------|--------|-------------|
+| **Vision** | `screen_process` | Captures screen or camera, analyzes with Gemini Vision, speaks a brief summary |
+| **Code** | `code_helper` | Writes, edits, debugs code files with AI-powered analysis |
+| **Code** | `dev_agent` | Full dev agent — plans, implements, and tests features autonomously |
+| **Code** | `prompt_optimizer` | Optimizes and restructures prompts for better AI responses |
+| **Web** | `web_search` | Searches the web and returns structured results with summaries |
+| **Web** | `browser_control` | Controls Chrome browser — navigate, click, type, extract content |
+| **File System** | `file_controller` | Creates, renames, moves, copies, deletes files and folders |
+| **File System** | `file_processor` | Processes various file types (CSV, JSON, images, PDFs) with extraction |
+| **File System** | `doc_creator` | Generates formatted documents (Markdown, PDF, HTML reports) |
+| **Communication** | `send_message` | Sends WhatsApp, Telegram, and Email messages via configured APIs |
+| **Communication** | `meeting_analyzer` | Analyzes meeting transcripts for action items, decisions, summaries |
+| **System** | `computer_control` | Full PC control — keyboard typing, mouse clicks, hotkeys, clipboard |
+| **System** | `computer_settings` | Adjusts system settings — volume, brightness, Wi-Fi, Bluetooth |
+| **System** | `open_app` | Launches applications by name (Chrome, VSCode, Spotify, etc.) |
+| **System** | `desktop` | Manages windows — minimize, maximize, close, switch, arrange |
+| **Multimedia** | `image_generation` | Generates images via AI models (local or API-based generation) |
+| **Multimedia** | `video_editing` | Edits videos — trim, concatenate, add effects, transitions |
+| **Multimedia** | `content_studio` | Creates full content packs — thumbnails, captions, descriptions, scripts |
+| **Multimedia** | `youtube_video` | Uploads videos to YouTube with title, description, tags, schedule |
+| **Mobile** | `mobile_control` | Controls Android devices via ADB — tap, swipe, type, screenshot |
+| **Build** | `frontend_builder` | Scaffolds and builds full frontend projects (React, Vue, HTML/CSS/JS) |
+| **Build** | `apk_builder` | Builds Android APKs from source with gradle configuration |
+| **Build** | `extension_builder` | Creates Chrome extensions from natural language descriptions |
+| **Build** | `game_updater` | Updates game builds — patching, versioning, asset management |
+| **Composio** | `composio_tools` | Integrates with 1000+ external apps via Composio (Slack, Notion, GitHub, etc.) |
+| **Utilities** | `weather_report` | Gets current weather and forecasts for any location |
+| **Utilities** | `flight_finder` | Searches flights between destinations with pricing |
+| **Utilities** | `reminder` | Sets, lists, and manages reminders with desktop notifications |
+| **Utilities** | `gesture_control` | Controls PC via hand gestures using webcam + MediaPipe |
+| **Utilities** | `attention_monitor` | Monitors user attention — detects if you're away from the screen |
+
+### 🧠 Semantic Memory (Mem0AI)
+
+- **Persistent memory** — JARVIS remembers facts, preferences, and conversation history across sessions
+- **Gemini embeddings** — Uses `gemini-embedding-2` for high-quality semantic search (3072-dim vectors)
+- **ChromaDB storage** — Local, file-based vector database. No cloud, no server needed
+- **Explicit facts** — Save structured memories with `save_memory` tool (categories like relationships, preferences, notes, tasks)
+- **Auto-conversation** — Each conversation turn is automatically stored and retrievable
+- **Context retrieval** — Relevant memories are loaded at startup and during conversations to personalize responses
+
+### 🎨 User Interface (Holographic HUD)
+
+- **PyQt6-powered HUD** — custom-drawn arc reactor core, animated rings, waveform bars, and tactical overlays
+- **Orbitron & Fira Code** custom fonts for a futuristic aesthetic
+- **System metrics** — real-time CPU, RAM, GPU, network, and thermal monitoring with neon bar widgets
+- **Activity log** — typewriter-animated terminal-style output with color-coded entries
+- **Sound effects** — startup chime, click sounds, error alerts (`sfx/` folder)
+- **Mute toggle** — press `F4` to mute/unmute the microphone
+- **Drag-and-drop** — file upload via drag-drop zone or file browser dialog
+
+### 🏗️ Agent Architecture
+
+- **Planner** (`agent/planner.py`) — Decomposes complex requests into sub-tasks
+- **Executor** (`agent/executor.py`) — Executes planned tasks with progress tracking
+- **Task Queue** (`agent/task_queue.py`) — Manages concurrent task execution with dependencies
+- **Error Handler** (`agent/error_handler.py`) — Graceful error recovery and retry logic
+
+### ⚡ Real-time Audio Pipeline
+
+- **WebSocket streaming** — Bidirectional audio via Gemini Live API
+- **sounddevice** — Low-latency microphone capture and speaker playback
+- **Tool-aware gate** — Audio queuing pauses during tool execution to prevent server conflicts
+- **Auto-reconnect** — Seamless reconnection on connection drop
+- **Playback queue** — Smooth audio playback with `sounddevice` callback streaming
 
 ---
 
-## 🧐 Overview
-STARK AI was built to serve as a unified interface for all digital tasks. Unlike traditional assistants that merely answer questions, J.A.R.V.I.S uses an **agentic architecture** to plan complex goals, execute multi-step tool sequences, and self-correct based on real-time feedback from your computer and mobile devices.
+## 🧱 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     main.py (Orchestrator)                    │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ Gemini Live  │  │  Tool Router  │  │  Audio Pipeline  │   │
+│  │ API Session  │  │ (25+ actions) │  │  (mic + speaker) │   │
+│  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘   │
+│         │                 │                    │              │
+└─────────┼─────────────────┼────────────────────┼─────────────┘
+          │                 │                    │
+┌─────────▼─────────────────▼────────────────────▼─────────────┐
+│                     actions/ (Modules)                        │
+│  screen_processor.py    code_helper.py      web_search.py    │
+│  file_controller.py     browser_control.py  computer_ctrl.py │
+│  ... and 20+ more action modules                              │
+└──────────────────────────────────────────────────────────────┘
+          │
+┌─────────▼──────────────────────────────────────────────────┐
+│                  memory/mem0_memory.py                       │
+│  ┌──────────────┐    ┌──────────────┐    ┌─────────────┐   │
+│  │ Gemini Embed  │───▶│ ChromaDB     │───▶│ Memory      │   │
+│  │ (embedding-2) │    │ (local .db)  │    │ Retrieval   │   │
+│  └──────────────┘    └──────────────┘    └─────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+          │
+┌─────────▼──────────────────────────────────────────────────┐
+│                    agent/ (Task Execution)                   │
+│  planner.py    executor.py    task_queue.py    error_handler │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Data flow:**
+1. Audio stream → Gemini Live API → Text response → Audio playback
+2. Gemini calls a tool → `_execute_tool()` routes to the right `actions/*.py` module
+3. Tool result → returned to Gemini → spoken response + optional silent return
+4. Conversations auto-saved to Mem0 memory for future context retrieval
+5. Memories loaded at startup and injected into system prompt for personalization
 
 ---
 
-## 🏗️ Architecture
+## 🚀 Getting Started
 
-J.A.R.V.I.S is built on a modular agentic framework:
-*   **The Brain (Gemini Live API):** Handles multimodal audio/text/image reasoning using the `google.genai` SDK.
-*   **The Planner (`agent/planner.py`):** Parses complex goals into actionable tool sequences using semantic understanding.
-*   **The Executor (`agent/executor.py`):** Sequentially invokes the correct action modules, managing concurrency and state.
-*   **Error Handler (`agent/error_handler.py`):** Monitors execution, manages retries, and provides self-healing patterns for transient errors.
-*   **Memory Manager (`memory/memory_manager.py`):** Maintains long-term context using JSON storage, allowing JARVIS to remember identity, preferences, and relationships.
+### 1. System Prerequisites
 
----
+| Requirement | Version |
+|------------|---------|
+| Python | 3.10+ |
+| Operating System | Windows 10/11 (primary), Linux/macOS (experimental) |
+| Google Gemini API Key | [Get one free](https://aistudio.google.com/apikey) |
+| Microphone & Speaker | Required for voice interaction |
+| Chrome | Required for `browser_control` and `browser-use` features |
 
-## 🚀 Comprehensive Tool Module Documentation
+### 2. Installation
 
-J.A.R.V.I.S utilizes over 16 specialized automation modules:
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/stark-ai.git
+cd stark-ai
 
-### 📱 Mobile & Computer Control
-*   **Mobile Control (`actions/mobile_control.py`):** Hybrid **UIAutomator2 + Vision** engine. Allows for wireless control over Android devices including app launching, messaging, calling, and system settings (volume/brightness). Uses MDNS auto-discovery for wireless ADB connections.
-*   **Computer Control (`actions/computer_control.py`):** High-precision PC interaction using Windows-native UI tree parsing (`pywinauto`) for element identification by name, with Gemini 2.0 Flash vision as a fallback. Supports precise scrolling and pixel-accurate clicking.
-*   **Desktop Control (`actions/desktop.py`):** Manages wallpapers, organizes files, and provides desktop statistics.
+# Install all dependencies
+pip install -r requirements.txt
 
-### ⚙️ Autonomous Engineering
-*   **APK Builder (`actions/apk_builder.py`):** Architects, builds, and compiles native Android applications from natural language. It manages Gradle structures, manifest generation, and Kotlin code.
-*   **Extension Builder (`actions/extension_builder.py`):** Generates structured browser extensions for Chrome/Edge from natural language descriptions.
-*   **Frontend Builder (`actions/frontend_builder.py`):** Generates immersive UIs using Tailwind CSS, 3D (Three.js), and GSAP animations.
-*   **Code Helper (`actions/code_helper.py`):** Writes, edits, explains, runs, and builds code files programmatically.
-*   **Dev Agent (`actions/dev_agent.py`):** Builds complete multi-file projects, plans structure, installs dependencies, and manages errors.
+# (Optional) For memory features — install chromadb
+# Note: chromadb is already included in requirements.txt
+```
 
-### 🌐 Intelligence & Communication
-*   **Web Search (`actions/web_search.py`):** Advanced web browsing and research.
-*   **Browser Control (`actions/browser_control.py`):** Full browser orchestration: navigating, filling forms, extracting data, and managing sessions.
-*   **Send Message (`actions/send_message.py`):** PC-based communication module for WhatsApp, Telegram, and Signal.
-*   **Attention Monitor (`actions/attention_monitor.py`):** Proactively detects incoming communication (Zoom, Teams, Skype, WhatsApp) and injects announcements into the live session.
-*   **Meeting Analyzer (`actions/meeting_analyzer.py`):** Real-time audio transcription and screen-based analysis during virtual meetings.
+### 3. API Configuration
 
-### 🛠️ Utilities
-*   **File Controller (`actions/file_controller.py`):** Comprehensive local file management: CRUD operations, moving, copying, renaming, and finding files.
-*   **File Processor (`actions/file_processor.py`):** Multi-modal file processing engine for OCR, summarization, PDF extraction, format conversion, and media analysis.
-*   **Video Editing (`actions/video_editing.py`):** Advanced programmatic video editing capabilities, including trimming, merging, captioning, and beat-syncing.
-*   **Game Updater (`actions/game_updater.py`):** Automated management for Steam and Epic Games libraries.
-*   **Content Studio (`actions/content_studio.py`):** Studio for social media content creation (YouTube, Instagram).
-*   **Prompt Optimizer (`actions/prompt_optimizer.py`):** Refines user requests for high-fidelity tool execution.
+Create `config/api_keys.json` with your API keys:
 
----
+```json
+{
+    "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+    "opencode_zen_api_key": "YOUR_OPENCODE_ZEN_API_KEY_HERE (Optional)",
+    "composio_api_key": "YOUR_COMPOSIO_API_KEY",
+     "os_system": "windows"
+}
+```
 
-## 🛠️ Getting Started & Configuration
+> **Note:** Only `gemini_api_key` is required for basic functionality. The rest are optional for specific features.
 
-1. **System Prerequisites:**
-   - **OS:** Windows 10/11
-   - **Language:** Python 3.11
-   - **Dependencies:** Android SDK/JDK 17 (Required for APK compilation)
-2. **Installation:**
-   ```bash
-   git clone <repo-url>
-   pip install -r requirements.txt
-   ```
-3. **API Configuration:**
-   - Rename `config/api_keys.example.json` to `config/api_keys.json`.
-   - **Gemini Key (Mandatory):** Obtain from [Google AI Studio](https://aistudio.google.com/).
-   - **OpenCode/Composio Keys (Optional but Recommended):** 
-     - **OpenCode:** Obtain from [OpenCode.ai](https://opencode.ai/). Highly recommended for superior Android code reasoning.
-     - **Composio:** Obtain from [Composio.dev](https://composio.dev/). Required for advanced cloud-based automation (GitHub, Sheets, Notion).
-4. **Execution:**
-   - **Main Assistant:** Run the main.py file to launch the J.A.R.V.I.S UI and interactive session directly.
+### 4. Run JARVIS
+
+```bash
+python main.py
+```
+
+**Controls:**
+- `F4` — Toggle microphone mute
+- `Ctrl+C` — Exit gracefully
+- Just speak naturally after the `🔌 Connected` prompt
 
 ---
 
-## ⚙️ Advanced Setup Deep-Dive
+## 🔧 Configuration Reference
 
-### 🖐️ AI Gesture Control (Vision Mode)
-Transform your hand into a high-precision digital controller. Use the webcam to navigate your OS with low-latency tracking and AI-driven recognition.
-*   **The Tech Stack:** Powered by `cvzone` and `MediaPipe` for 21-point hand landmark detection. It processes frames in a dedicated background thread, ensuring JARVIS remains responsive while you control the PC.
-*   **High Precision & Smoothing:** Implements a snappy exponential moving average filter to eliminate cursor jitter, providing a "liquid" feel similar to a high-end trackpad.
-*   **Tactical HUD Feedback:** JARVIS opens a dedicated "Gesture Vision" window with a real-time HUD. It draws a digital skeleton over your hand and provides visual color confirmation (Green/Blue glows) when clicks are registered.
-*   **Full Gesture Mapping:**
-    - **Cursor Movement:** Use your **Index Finger** as the pointer (the HUD will track the tip).
-    - **Left Click:** Perform a **Pinch** gesture with your Index Finger and Thumb.
-    - **Right Click:** Perform a **Pinch** gesture with your Middle Finger and Thumb.
-    - **Smart Scroll:** Hold your **Index and Middle** fingers together and move your hand vertically to scroll through pages or lists.
-    - **Instant Minimize (Fist):** Close your hand into a **Fist** to instantly minimize all open windows (`Win+D`). This is the fastest way to clear your screen without searching for the minimize button.
+### `config/api_keys.json`
 
-### 📱 Wireless Mobile Control (UIAutomator2)
-The mobile control module provides structural, high-level interaction with your Android phone.
-*   **Under the Hood:** J.A.R.V.I.S installs a lightweight ATX Agent on the phone (`uiautomator2`). This agent converts high-level Python commands (`click("Call")`) into UI actions, bypassing the need for manual coordinate guessing.
-*   **Wireless Mechanism:** Uses **Wireless Debugging** (Android Developer Options). The setup uses MDNS for dynamic discovery; J.A.R.V.I.S automatically updates its connection whenever your WiFi IP/port changes.
-*   **Setup:**
-    1.  Enable *Wireless Debugging* in Android Developer Options.
-    2.  Ensure *Install via USB* and *USB Debugging (Security Settings)* are ENABLED.
-    3.  Run `py -3.11 -m uiautomator2 init` while connected to prime the driver.
+| Key | Required | Used By |
+|-----|----------|---------|
+| `gemini_api_key` | ✅ Yes | All features (Gemini models) |
+| `opencode_api_key` | Optional | Deepseek V4 Flash (OpenCode Zen model) |
+| `composio_api_key` | Optional | `composio_tools` — Composio SDK |
 
-### 🏗️ APK & Extension Compilation
-These features harness AI-driven reasoning to generate complex project structures.
-*   **APK Construction:** J.A.R.V.I.S generates the entire Kotlin/Gradle folder structure. To compile, the system automatically injects your `ANDROID_HOME` (SDK) and `JAVA_HOME` (JDK) paths to invoke Gradle and produce a production-ready `.apk`.
-*   **Error Correction:** If compilation fails, the logs are automatically captured and fed back into the reasoning model to suggest code fixes or structural changes in the next iteration.
+### `core/prompt.txt`
+
+The system prompt that defines JARVIS's personality, behavior, and tool usage rules. You can customize:
+- **Personality** — Tone, formality, role identity
+- **Tool descriptions** — How each action module is called
+- **Memory instructions** — When to save/retrieve memories
+- **Response format** — How to structure spoken responses
+
+### Audio Settings (in `main.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INPUT_DEVICE_INDEX` | `None` | Specific mic device (list with `python -c "import sounddevice; print(sounddevice.query_devices())"`) |
+| `OUTPUT_DEVICE_INDEX` | `None` | Specific speaker device |
+| `SAMPLE_RATE` | `24000` | Audio sample rate (must match Gemini Live API) |
+| `BLOCK_SIZE` | `48` | Audio buffer size for mic capture |
+| `CHANNELS` | `1` | Mono audio input |
 
 ---
 
-## 🛡️ Security & Risk Disclaimer
+## 🛠️ Tool Reference
 
-**Read carefully before use.** STARK AI is built for total system autonomy.
+### Vision
 
-1. **Cloud Privacy:** Screen/Audio processed by Google Gemini Cloud API. Avoid sensitive data.
-2. **Agentic Risk:** J.A.R.V.I.S has full control over your machine. AI hallucinations can lead to unintended actions.
-3. **Always-On Mic:** Uses a background listening loop.
-4. **Human-in-the-Loop (HITL):** A mandatory **🛡️ STARK SECURITY PROTOCOL** confirmation popup guards destructive actions (deleting files/system shutdown). **Do not bypass this security layer.**
+#### `screen_process`
+Captures and analyzes what's on screen or through the camera.
+- **Parameters:** `angle` (`"screen"` or `"camera"`), `text` (user query)
+- **Returns:** Brief spoken summary; full analysis logged to terminal
+- **Dependencies:** `PIL`, `mss` (screenshot), `opencv-python` (camera)
+
+### Code & Development
+
+#### `code_helper`
+Writes, edits, debugs, and explains code with AI analysis.
+- **Parameters:** `prompt` (what to do with the code), `path` (file to work on)
+- **Supports:** Any programming language, full file read/write, diff viewing
+
+#### `dev_agent`
+Full autonomous development agent — plans, implements, tests, and refactors.
+- **Parameters:** `task` (development task description)
+- **Workflow:** Analyze requirements → Plan → Implement → Test → Review
+
+#### `prompt_optimizer`
+Restructures and enhances prompts for better AI responses.
+- **Parameters:** `prompt` (raw prompt), `target_model` (optional: gpt, claude, gemini)
+- **Optimizations:** Clarity, structure, specificity, constraints
+
+### Web & Browsing
+
+#### `web_search`
+Performs Google Custom Search and returns structured results.
+- **Parameters:** `query` (search term)
+- **Returns:** Top results with titles, snippets, URLs
+- **Requires:** `google_cse_id` and `google_cse_key` in config
+
+#### `browser_control`
+Controls Chrome browser with Playwright — navigate, click, type, extract.
+- **Parameters:** `action` (navigate/click/type/extract/screenshot), `url`, `selector`, `text`
+- **Features:** Page navigation, element interaction, content extraction, screenshots
+
+### File System
+
+#### `file_controller`
+Full file and directory management.
+- **Parameters:** `action` (create/delete/rename/move/copy/list), `path`, `destination`, `content`
+- **Safe operations:** All operations confined to the project directory
+
+#### `file_processor`
+Reads and processes various file formats.
+- **Parameters:** `path` (file to process)
+- **Supported formats:** CSV, JSON, XML, PDF, Images (OCR via pytesseract), DOCX
+
+#### `doc_creator`
+Generates formatted documents from structured content.
+- **Parameters:** `format` (markdown/pdf/html), `title`, `content`, `output_path`
+- **Features:** Templates, headers, lists, tables, code blocks
+
+### Communication
+
+#### `send_message`
+Sends messages via multiple channels.
+- **Parameters:** `channel` (whatsapp/telegram/email), `recipient`, `message`
+- **WhatsApp:** Uses pywhatkit (opens web WhatsApp)
+- **Telegram:** Bot API (requires token + chat ID)
+- **Email:** Gmail SMTP (requires app password)
+
+#### `meeting_analyzer`
+Analyzes meeting transcripts for key insights.
+- **Parameters:** `text` (transcript content), `mode` (summary/action-items/decisions)
+- **Returns:** Structured analysis with participants, decisions, action items, timeline
+
+### System Control
+
+#### `computer_control`
+Full keyboard and mouse automation.
+- **Parameters:** `action` (type/hotkey/mouse/scroll/clipboard), `text`, `key`, `x`, `y`
+- **Features:** Key press sequences, hotkeys (Ctrl+C, Win+D), mouse movement, clipboard R/W
+
+#### `computer_settings`
+Adjusts system settings.
+- **Parameters:** `setting` (volume/brightness/wifi/bluetooth), `value`
+- **Volume:** 0–100 percentage
+- **Brightness:** 0–100 percentage (Windows)
+
+#### `open_app`
+Launches applications by name.
+- **Parameters:** `app_name` (chrome/vscode/spotify/calculator/explorer/terminal/notepad)
+- **Platform:** Uses Windows `start` command; customizable app mapping
+
+#### `desktop`
+Window management.
+- **Parameters:** `action` (minimize/maximize/close/switch/arrange/snap), `window_title`
+- **Features:** Window snap (left/right/corner), virtual desktop switching (Win 10/11)
+
+### Multimedia
+
+#### `image_generation`
+Generates images from text descriptions.
+- **Parameters:** `prompt` (description), `model` (local/cloud), `size`, `count`
+- **Supported engines:** Stable Diffusion (local), Gemini (API), DALL-E (API)
+
+#### `video_editing`
+Edits video files with FFmpeg.
+- **Parameters:** `action` (trim/concat/effects/resize/convert), `input`, `output`, `params`
+- **Features:** Trimming, concatenation, filters, transitions, format conversion
+
+#### `content_studio`
+Creates full content packs for social media.
+- **Parameters:** `topic`, `platform` (youtube/tiktok/instagram/twitter), `style`
+- **Output:** Thumbnail concepts, captions, hashtags, descriptions, scripts
+
+#### `youtube_video`
+Uploads videos to YouTube.
+- **Parameters:** `video_path`, `title`, `description`, `tags`, `privacy` (public/unlisted/private)
+- **Requires:** Google OAuth credentials for YouTube Data API v3
+
+### Mobile
+
+#### `mobile_control`
+Controls Android devices via ADB (Android Debug Bridge).
+- **Parameters:** `action` (tap/swipe/type/screenshot/app), `x`, `y`, `text`
+- **Requires:** ADB installed and device connected via USB/Wi-Fi debugging
+
+### Build Tools
+
+#### `frontend_builder`
+Scaffolds complete frontend projects.
+- **Parameters:** `framework` (react/vue/vanilla), `name`, `description`
+- **Output:** Full project with routing, components, styling, config files
+
+#### `apk_builder`
+Builds Android APK from source.
+- **Parameters:** `source_path`, `build_type` (debug/release), `output_name`
+- **Requires:** Android SDK + Gradle configured
+
+#### `extension_builder`
+Creates Chrome extensions from description.
+- **Parameters:** `name`, `description`, `permissions`, `features`
+- **Output:** Manifest V3 extension with popup, background script, content scripts
+
+#### `game_updater`
+Manages game build updates.
+- **Parameters:** `action` (patch/version/assets), `game_path`, `version`
+- **Features:** Asset patching, version bumping, build packaging
+
+### Integrations
+
+#### `composio_tools`
+Accesses 1000+ third-party apps via Composio SDK.
+- **Parameters:** `app` (slack/notion/github/jira/gmail/...), `action`, `params`
+- **Requires:** `composio_api_key` in config
+- **Examples:** Send Slack message, create GitHub issue, add Notion page
+
+### Utilities
+
+#### `weather_report`
+Gets weather data for any location.
+- **Parameters:** `location` (city name or coordinates), `units` (metric/imperial)
+- **Returns:** Temperature, conditions, humidity, wind, forecast (5-day)
+- **Requires:** `weather_api_key` from OpenWeatherMap
+
+#### `flight_finder`
+Searches for flights between destinations.
+- **Parameters:** `origin`, `destination`, `date`, `passengers`
+- **Returns:** Flight options with airlines, times, prices, duration
+
+#### `reminder`
+Sets and manages reminders.
+- **Parameters:** `action` (set/list/delete/clear), `text`, `time` (in minutes from now)
+- **Notifications:** Windows native toast notifications via `win10toast`
+
+#### `gesture_control`
+Controls the PC with hand gestures via webcam.
+- **Parameters:** `action` (start/stop)
+- **Gestures:** Swipe (left/right), pinch (zoom), fist (stop), point (cursor)
+- **Requires:** `opencv-python`, `mediapipe`
+
+#### `attention_monitor`
+Detects user presence using webcam.
+- **Parameters:** `action` (start/stop), `timeout_seconds` (away threshold)
+- **Events:** User away / User returned / User drowsy
+- **Requires:** `opencv-python`, `mediapipe`, `dlib`
+
+---
+
+## 🧠 Memory System (Mem0AI)
+
+### How It Works
+
+JARVIS uses **Mem0** to store and retrieve information with semantic understanding:
+
+1. **Embeddings:** Every memory is converted to a vector using Gemini's `gemini-embedding-2` model
+2. **Storage:** Vectors are stored locally in ChromaDB (a file-based vector database)
+3. **Retrieval:** When JARVIS needs context, it searches for semantically similar memories
+4. **History:** Past conversations are also vectorized and searchable
+
+### Explicit Facts
+
+Use the `save_memory` tool to store specific information:
+
+| Category | Example |
+|----------|---------|
+| `relationships` | "My brother's name is Ayush Bhatt" |
+| `preferences` | "I prefer dark mode in all apps" |
+| `notes` | "Project deadline is next Friday" |
+| `tasks` | "Remember to buy groceries tomorrow" |
+| `custom` | Any structured key-value data |
+
+### Auto-Memory
+
+JARVIS automatically stores conversations in the background. When you restart the session, relevant past memories are loaded into context so JARVIS remembers who you are and what you've discussed.
+
+### Storage Location
+
+All memory data is stored locally in:
+```
+{project_root}/memory/vector_store/
+```
+
+No data is sent to any cloud service (except the Gemini embedding API call, which uses your API key).
+
+---
+
+## 🤖 Agent System
+
+For complex, multi-step tasks, JARVIS uses an internal agent system:
+
+### Planner (`agent/planner.py`)
+- Decomposes high-level requests into executable sub-tasks
+- Identifies dependencies between tasks
+- Creates an ordered execution plan
+
+### Executor (`agent/executor.py`)
+- Runs tasks from the plan with progress tracking
+- Handles task failures with retry logic
+- Reports intermediate results
+
+### Task Queue (`agent/task_queue.py`)
+- Manages concurrent task execution
+- Respects task dependencies (task B waits for task A)
+- Load-balanced execution across available workers
+
+### Error Handler (`agent/error_handler.py`)
+- Catches and categorizes errors (retryable vs non-retryable)
+- Implements exponential backoff for retries
+- Logs structured error reports
+
+---
+
+## 📁 Project Structure
+
+```
+├── main.py                      # Entry point — orchestrates everything
+├── ui.py                        # PyQt6 Holographic HUD interface
+├── setup.py                     # Package setup
+├── requirements.txt             # Python dependencies
+├── readme.md                    # This file
+│
+├── actions/                     # All action modules (25+ files)
+│   ├── screen_processor.py      # Vision: screen/camera analysis
+│   ├── code_helper.py           # Code writing & debugging
+│   ├── dev_agent.py             # Autonomous development agent
+│   ├── web_search.py            # Google search
+│   ├── browser_control.py       # Chrome automation
+│   ├── file_controller.py       # File system operations
+│   ├── file_processor.py        # File format processing
+│   ├── doc_creator.py           # Document generation
+│   ├── send_message.py          # WhatsApp/Telegram/Email
+│   ├── meeting_analyzer.py      # Meeting transcript analysis
+│   ├── computer_control.py      # Keyboard & mouse automation
+│   ├── computer_settings.py     # System settings
+│   ├── open_app.py              # Application launcher
+│   ├── desktop.py               # Window management
+│   ├── image_generation.py      # AI image generation
+│   ├── video_editing.py         # Video editing
+│   ├── content_studio.py        # Content creation suite
+│   ├── youtube_video.py         # YouTube uploader
+│   ├── mobile_control.py        # Android device control
+│   ├── frontend_builder.py      # Frontend project scaffolder
+│   ├── apk_builder.py           # APK build tool
+│   ├── extension_builder.py     # Chrome extension creator
+│   ├── game_updater.py          # Game update manager
+│   ├── composio_tools.py        # Third-party app integrations
+│   ├── weather_report.py        # Weather data
+│   ├── flight_finder.py         # Flight search
+│   ├── reminder.py              # Reminder system
+│   ├── gesture_control.py       # Hand gesture recognition
+│   ├── attention_monitor.py     # User attention tracking
+│   └── prompt_optimizer.py      # Prompt optimization
+│
+├── agent/                       # Internal task execution system
+│   ├── planner.py               # Task decomposition
+│   ├── executor.py              # Task execution engine
+│   ├── task_queue.py            # Concurrent task management
+│   └── error_handler.py         # Error recovery
+│
+├── memory/                      # Semantic memory system
+│   ├── mem0_memory.py           # Mem0AI integration (Gemini embeddings + ChromaDB)
+│   ├── __init__.py              # Memory module exports
+│   ├── config_manager.py        # Memory configuration
+│   └── memory_manager.py        # Legacy memory manager (JSON-based, deprecated)
+│
+├── config/                      # Configuration
+│   ├── api_keys.example.json    # API key template
+│   ├── api_keys.json            # Your actual API keys (gitignored)
+│   ├── genai_client.py          # Gemini client configuration
+│   └── __init__.py              # Config exports
+│
+├── core/                        # Core system files
+│   └── prompt.txt               # System prompt (JARVIS's personality & rules)
+│
+├── fonts/                       # Custom TUI fonts
+│   ├── Orbitron-*.ttf           # Futuristic display font
+│   └── FiraCode-*.ttf           # Monospace coding font
+│
+├── sfx/                         # Sound effects
+│   ├── startup.wav              # Startup chime
+│   ├── click.wav                # UI click feedback
+│   └── error.wav                # Error alert
+│
+└── .github/                     # CI/CD workflows
+    ├── workflows/
+    │   ├── gemini-invoke.yml
+    │   ├── gemini-review.yml
+    │   └── ...
+    └── commands/
+        ├── gemini-invoke.toml
+        └── ...
+```
+
+---
+
+## 📋 Notes
+
+- **Human-in-the-Loop (HITL):** A mandatory 🛡️ **STARK SECURITY PROTOCOL** confirmation popup guards destructive actions (deleting files, system shutdown, etc.). This security layer cannot be bypassed — you'll always be asked to confirm before anything irreversible happens.
+- **System Control:** Some modules (`computer_control`, `desktop`, `browser_control`, `mobile_control`) can perform powerful actions on your system. It's a good idea to test them in a safe environment first to get comfortable with what they can do.
+- **API Keys:** Your API keys are stored in `config/api_keys.json`. Keep this file safe and don't share it publicly — just like you would with any password.
+- **Internet Usage:** Modules like `web_search`, `send_message`, `composio_tools`, and `youtube_video` send data to third-party services. Check their terms of service if you're using them extensively.
+- **AI Accuracy:** AI-generated code, file edits, and analysis may contain errors or unexpected behaviour. Review changes before applying them to anything important.
+- **Voice Privacy:** Voice audio is streamed to Google's Gemini API for processing. No audio is permanently stored by this project locally beyond what's needed for real-time interaction.
+
+---
+
+## 📝 License
+
+This project is for personal and educational use. All dependencies and APIs are subject to their respective licenses and terms of service.
+
+---
+
+## 🙏 Acknowledgements
+
+- **Google Gemini** — Live API for real-time voice AI
+- **Mem0** — Open-source memory layer for LLMs
+- **ChromaDB** — Local vector database
+- **Playwright** — Reliable browser automation
+- **Composio** — Third-party app integrations
 
 ---
 

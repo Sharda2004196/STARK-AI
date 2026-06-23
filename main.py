@@ -10,9 +10,7 @@ import sounddevice as sd
 from google import genai
 from google.genai import types, errors
 from ui import JarvisUI
-from memory.memory_manager import (
-    load_memory, update_memory, format_memory_for_prompt,
-)
+from memory.mem0_memory import Mem0Memory
 
 from actions.file_processor    import file_processor
 from actions.flight_finder     import flight_finder
@@ -271,7 +269,7 @@ TOOL_DECLARATIONS = [
             "MUST be called when user asks what is on screen, what you see, "
             "analyze my screen, look at camera, etc. "
             "You have NO visual ability without this tool. "
-            "After calling this tool, stay SILENT — the vision module speaks directly."
+            "After calling this tool, JARVIS will read the result aloud to the user."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -591,6 +589,7 @@ TOOL_DECLARATIONS = [
             "required": ["action"]
         }
     },
+
     {
         "name": "shutdown_jarvis",
         "description": (
@@ -739,9 +738,26 @@ class JarvisLive:
         self.ui.on_text_command = self._on_text_command
         self._turn_done_event: asyncio.Event | None = None
 
+        # ─── Tool-response gate ─────────────────────────────────────────
+        # During a tool call the server expects ONLY a tool_response.
+        # Any other message (audio, client_content, realtime_input) sent
+        # during that window triggers 1007 WEBSOCKET CLOSE.
+        self._tool_response_pending = False
+        self._tool_gate_lock = threading.Lock()
+        self._pending_speak: list[str] = []     # queued speak() text
+        self._pending_text: list[str] = []       # queued _on_text_command text
+
+        # ─── Mem0AI Semantic Memory ─────────────────────────────────────
+        self.mem0 = Mem0Memory()
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        # Queue text during tool-response window to avoid 1007
+        with self._tool_gate_lock:
+            if self._tool_response_pending:
+                self._pending_text.append(text)
+                return
         asyncio.run_coroutine_threadsafe(
             self.session.send_realtime_input(text=text),
             self._loop
@@ -758,6 +774,11 @@ class JarvisLive:
     def speak(self, text: str):
         if not self._loop or not self.session:
             return
+        # Queue speech during tool-response window to avoid 1007
+        with self._tool_gate_lock:
+            if self._tool_response_pending:
+                self._pending_speak.append(text)
+                return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -765,6 +786,14 @@ class JarvisLive:
             ),
             self._loop
         )
+
+    def _store_mem0_turn(self, user_text: str, assistant_text: str):
+        """Store a conversation turn in Mem0 semantic memory (runs in thread)."""
+        threading.Thread(
+            target=self.mem0.store_conversation,
+            args=(user_text, assistant_text),
+            daemon=True
+        ).start()
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -774,8 +803,6 @@ class JarvisLive:
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
-        memory     = load_memory()
-        mem_str    = format_memory_for_prompt(memory)
         sys_prompt = _load_system_prompt()
 
         now      = datetime.now()
@@ -787,8 +814,19 @@ class JarvisLive:
         )
 
         parts = [time_ctx]
-        if mem_str:
-            parts.append(mem_str)
+
+        # ─── Retrieve Mem0AI semantic memories ─────────────────────────
+        if self.mem0.enabled:
+            try:
+                mem0_mems = self.mem0.get_relevant_memories(
+                    query="user preferences, identity, projects, and personal information"
+                )
+                mem0_str = self.mem0.format_memories_for_prompt(mem0_mems)
+                if mem0_str:
+                    parts.append(mem0_str)
+            except Exception as e:
+                print(f"[Mem0] ⚠️ Retrieval error in _build_config: {e}")
+
         parts.append(sys_prompt)
 
         return types.LiveConnectConfig(
@@ -833,22 +871,24 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
+        loop   = asyncio.get_event_loop()
+        result = "Done."
+
         try:
             if name == "save_memory":
                 category = args.get("category", "notes")
                 key      = args.get("key", "")
                 value    = args.get("value", "")
                 if key and value:
-                    update_memory({category: {key: {"value": value}}})
-                    print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self.mem0.store_fact(category, key, value)
+                    )
                 
                 return types.FunctionResponse(
                     id=fc.id, name=name,
                     response={"result": "ok", "silent": True}
                 )
-
-            loop   = asyncio.get_event_loop()
-            result = "Done."
 
             if name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
@@ -882,13 +922,15 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "screen_process":
-                threading.Thread(
-                    target=screen_process,
-                    kwargs={"parameters": args, "response": None,
-                            "player": self.ui, "session_memory": None},
-                    daemon=True
-                ).start()
-                result = "Vision module activated. Stay completely silent — vision module will speak directly."
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: screen_process(
+                        parameters=args, response=None,
+                        player=self.ui, session_memory=None,
+                        speak=self.speak
+                    )
+                )
+                result = r or "Vision analysis complete."
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
@@ -941,6 +983,8 @@ class JarvisLive:
             elif name == "gesture_control":
                 r = await loop.run_in_executor(None, lambda: gesture_control(parameters=args, player=self.ui))
                 result = r or "Done."
+
+
 
             elif name == "content_studio":
                 if not args.get("image_path") and self.ui.current_file:
@@ -1075,7 +1119,20 @@ class JarvisLive:
 
     async def _send_realtime(self):
         while True:
-            msg = await self.out_queue.get()
+            # Poll with timeout instead of blocking get() so we can
+            # skip audio chunks during tool-response windows
+            try:
+                msg = await asyncio.wait_for(
+                    self.out_queue.get(),
+                    timeout=0.1
+                )
+            except asyncio.TimeoutError:
+                continue
+
+            # Skip sending audio during tool-response window to avoid 1007
+            with self._tool_gate_lock:
+                if self._tool_response_pending:
+                    continue  # drop this chunk (safe to lose)
             await self.session.send_realtime_input(
                 audio=types.Blob(data=msg["data"], mime_type="audio/pcm")
             )
@@ -1088,6 +1145,10 @@ class JarvisLive:
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted:
+                # Skip queuing audio during tool-response window to avoid QueueFull
+                with self._tool_gate_lock:
+                    if self._tool_response_pending:
+                        return
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -1149,15 +1210,48 @@ class JarvisLive:
                                 self.ui.write_log(f"Jarvis: {full_out}")
                             out_buf = []
 
+                            # ─── Store conversation turn in Mem0 ──────
+                            if full_in and self.mem0.enabled:
+                                self._store_mem0_turn(full_in, full_out)
+
                     if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
+                        # GATE OPEN: Prevent audio/speak/text during tool execution
+                        with self._tool_gate_lock:
+                            self._tool_response_pending = True
+
+                        try:
+                            fn_responses = []
+                            for fc in response.tool_call.function_calls:
+                                print(f"[JARVIS] 📞 {fc.name}")
+                                fr = await self._execute_tool(fc)
+                                fn_responses.append(fr)
+                            await self.session.send_tool_response(
+                                function_responses=fn_responses
+                            )
+                        finally:
+                            # GATE CLOSED: Always clear flag, even on exception
+                            with self._tool_gate_lock:
+                                self._tool_response_pending = False
+                                pending_speak = list(self._pending_speak)
+                                pending_text = list(self._pending_text)
+                                self._pending_speak.clear()
+                                self._pending_text.clear()
+
+                        # Deliver queued speech via send_client_content
+                        for text in pending_speak:
+                            asyncio.run_coroutine_threadsafe(
+                                self.session.send_client_content(
+                                    turns={"parts": [{"text": text}]},
+                                    turn_complete=True
+                                ),
+                                self._loop
+                            )
+                        # Deliver queued text commands via send_realtime_input
+                        for text in pending_text:
+                            asyncio.run_coroutine_threadsafe(
+                                self.session.send_realtime_input(text=text),
+                                self._loop
+                            )
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
@@ -1241,7 +1335,15 @@ class JarvisLive:
             except Exception as e:
                 print(f"[JARVIS] ⚠️ {e}")
                 traceback.print_exc()
-            
+
+        # Reset tool-response gate for clean reconnect
+        with self._tool_gate_lock:
+            self._tool_response_pending = False
+            self._pending_speak.clear()
+            self._pending_text.clear()
+
+        # Mem0 keeps its state across reconnects (persisted to disk)
+
             self.set_speaking(False)
             self.ui.set_state("THINKING")
             print("[JARVIS] 🔄 Reconnecting in 3s...")
