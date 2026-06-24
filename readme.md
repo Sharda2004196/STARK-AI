@@ -277,7 +277,7 @@ Generates formatted documents from structured content.
 #### `send_message`
 Sends messages via multiple channels.
 - **Parameters:** `channel` (whatsapp/telegram/email), `recipient`, `message`
-- **WhatsApp:** Uses pywhatkit (opens web WhatsApp)
+- **WhatsApp:** Uses UIAutomation (opens WhatsApp Desktop)
 - **Telegram:** Bot API (requires token + chat ID)
 - **Email:** Gmail SMTP (requires app password)
 
