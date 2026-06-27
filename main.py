@@ -6,6 +6,9 @@ import sys
 import traceback
 from pathlib import Path
 
+# Match any standard WebSocket close code (1000–1011) for session rotation detection
+_WS_CLOSE_RE = re.compile(r"\b(100[0-9]|101[01])\b")
+
 import sounddevice as sd
 from google import genai
 from google.genai import types, errors
@@ -40,6 +43,7 @@ from actions.gesture_control   import gesture_control
 from actions.composio_tools    import JarvisToolManager
 from actions.video_editing     import video_editing
 from actions.doc_creator       import doc_creator
+from actions.ui_automation    import ui_automation
 try:
     from actions.attention_monitor import AttentionMonitor, handle_call_action, read_event_preview
 except ImportError:
@@ -411,19 +415,23 @@ TOOL_DECLARATIONS = [
     {
         "name": "computer_control",
         "description": (
-            "High-Precision Computer Control. Uses structural UI tree and Gemini 2.0 Flash vision. Actions:\n"
-            "- screen_click: Click an element by description (uses AI vision).\n"
-            "- click: Click by [x, y] coordinates or description.\n"
+            "Coordinate-based and keyboard control. Actions:\n"
+            "- click: Click by [x, y] coordinates only.\n"
             "- type / press / hotkey: Input text or keys.\n"
             "- scroll: Precise pixel-based scrolling (direction='up'|'down', amount=pixels).\n"
             "- focus_window: Bring a specific app to foreground by title.\n"
-            "- screenshot: Capture the PC screen."
+            "- screenshot: Capture the PC screen.\n"
+            "- screen_click: Low-confidence vision fallback — uses AI to guess where an element is.\n"
+            "\n"
+            "IMPORTANT: For clicking buttons/menus/UI elements by their VISIBLE LABEL or NAME, "
+            "use 'ui_automation' instead. This tool (computer_control) cannot find elements by name — "
+            "it only clicks at raw coordinates or guesses via vision."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "screen_click | click | type | press | hotkey | scroll | focus_window | screenshot"},
-                "description": {"type": "STRING", "description": "Element description for screen_click (e.g. 'WhatsApp call button')"},
+                "action":      {"type": "STRING", "description": "click | type | press | hotkey | scroll | focus_window | screenshot | screen_click"},
+                "description": {"type": "STRING", "description": "Element description for screen_click (low-confidence vision fallback)"},
                 "text":        {"type": "STRING", "description": "Text to type"},
                 "key":         {"type": "STRING", "description": "Key name (e.g. 'enter')"},
                 "keys":        {"type": "STRING", "description": "Hotkey (e.g. 'ctrl+c')"},
@@ -591,6 +599,102 @@ TOOL_DECLARATIONS = [
     },
 
     {
+        "name": "ui_automation",
+        "description": (
+            "PRIMARY tool for clicking or interacting with ANY desktop application's buttons, "
+            "menus, text fields, and UI elements by their visible label/name. "
+            "Uses Windows UIAutomation to read the actual UI element tree "
+            "(the same API screen readers use).\n\n"
+            "USE THIS INSTEAD OF 'computer_control' FOR:\n"
+            "- Clicking 'New Project' in Filmora\n"
+            "- Clicking 'Create Playlist' in Spotify\n"
+            "- Clicking any button, menu, or item by its LABEL/TEXT\n"
+            "- Typing text into input fields in any app\n"
+            "- Reading text from UI elements\n"
+            "- Discovering what buttons exist via list_controls\n\n"
+            "ALWAYS call 'list_controls' FIRST to discover the exact element names, "
+            "then use those names with 'click' or other actions.\n\n"
+            "Automatically falls back to vision-based clicking if UIA cannot find the element.\n"
+            "Actions:\n"
+            "- click: Click a button/menu/item by its visible label text.\n"
+            "- list_controls: Discover all interactable elements in a window.\n"
+            "- find_window: Locate and focus an application window by title.\n"
+            "- double_click / right_click: Alternative click types.\n"
+            "- type_text: Type text into an input field (optionally clear first).\n"
+            "- get_text: Read text from a UI element.\n"
+            "- invoke: Trigger the default action of a control.\n"
+            "- screenshot: Capture the window's appearance."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "click | list_controls | find_window | double_click | right_click | type_text | get_text | invoke | screenshot"
+                },
+                "window": {
+                    "type": "STRING",
+                    "description": "Title or partial title of the target application window (e.g. 'Filmora', 'WhatsApp', 'Notepad')"
+                },
+                "description": {
+                    "type": "STRING",
+                    "description": "Name/label/text of the UI element to interact with (e.g. 'New Project', 'OK', 'Open')"
+                },
+                "ctrl_type": {
+                    "type": "STRING",
+                    "description": "Optional filter: button | edit | text | checkbox | combobox | listitem | menuitem | tab | hyperlink | slider | pane | group"
+                },
+                "automation_id": {
+                    "type": "STRING",
+                    "description": "Optional automation ID for precise element targeting"
+                },
+                "text": {
+                    "type": "STRING",
+                    "description": "Text to type (for type_text action)"
+                },
+                "clear_first": {
+                    "type": "BOOLEAN",
+                    "description": "Clear field before typing (default: true)"
+                },
+                "wait_before": {
+                    "type": "NUMBER",
+                    "description": "Seconds to wait before the action (default: 0)"
+                },
+                "max_items": {
+                    "type": "INTEGER",
+                    "description": "Max items for list_controls (default: 60)"
+                },
+                "output_path": {
+                    "type": "STRING",
+                    "description": "Save path for screenshot"
+                },
+                "timeout": {
+                    "type": "NUMBER",
+                    "description": "Seconds to wait for find_window (default: 3)"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "set_mute",
+        "description": (
+            "Mutes or unmutes the microphone. "
+            "Call this when the user tells you to mute or unmute yourself "
+            "(e.g. 'Jarvis mute yourself', 'Jarvis unmute', 'shut up', 'listen')."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "muted": {
+                    "type": "BOOLEAN",
+                    "description": "True to mute the microphone, False to unmute and listen"
+                }
+            },
+            "required": ["muted"]
+        }
+    },
+    {
         "name": "shutdown_jarvis",
         "description": (
             "Shuts down the assistant completely. "
@@ -725,6 +829,10 @@ TOOL_DECLARATIONS = [
     },
 ]
 
+class _GoAwayReceived(Exception):
+    """Raised when the server signals a graceful session rotation."""
+
+
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
@@ -746,6 +854,9 @@ class JarvisLive:
         self._tool_gate_lock = threading.Lock()
         self._pending_speak: list[str] = []     # queued speak() text
         self._pending_text: list[str] = []       # queued _on_text_command text
+
+        # ─── Session resumption (graceful GoAway handling) ───────────
+        self._session_handle: str | None = None
 
         # ─── Mem0AI Semantic Memory ─────────────────────────────────────
         self.mem0 = Mem0Memory()
@@ -815,15 +926,31 @@ class JarvisLive:
 
         parts = [time_ctx]
 
-        # ─── Retrieve Mem0AI semantic memories ─────────────────────────
+        # ─── Retrieve Mem0AI semantic memories (V2: multi-query for completeness) ──
         if self.mem0.enabled:
             try:
-                mem0_mems = self.mem0.get_relevant_memories(
-                    query="user preferences, identity, projects, and personal information"
-                )
-                mem0_str = self.mem0.format_memories_for_prompt(mem0_mems)
+                # Query with multiple angles to catch more semantic matches
+                queries = [
+                    "user preferences, identity, projects, and personal information",
+                    "user name, location, profession, skills, and interests",
+                    "user family, friends, relationships, and daily life",
+                    "user goals, wishes, future plans, and things to buy",
+                    "the user's personal details and stored facts about them",
+                ]
+                all_mems: list[str] = []
+                seen = set()
+                for q in queries:
+                    batch = self.mem0.get_relevant_memories(query=q)
+                    for m in batch:
+                        key = m.lower().strip()
+                        if key not in seen:
+                            seen.add(key)
+                            all_mems.append(m)
+
+                mem0_str = self.mem0.format_memories_for_prompt(all_mems)
                 if mem0_str:
                     parts.append(mem0_str)
+                    print(f"[Mem0] 📋 Injected {len(all_mems)} memory items into context")
             except Exception as e:
                 print(f"[Mem0] ⚠️ Retrieval error in _build_config: {e}")
 
@@ -833,7 +960,8 @@ class JarvisLive:
             response_modalities=["AUDIO"],
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            session_resumption=types.SessionResumptionConfig(),
+            session_resumption=types.SessionResumptionConfig(handle=self._session_handle),
+
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -1089,6 +1217,18 @@ class JarvisLive:
                 else:
                     result = "Meeting analyzer module not loaded."
 
+            elif name == "ui_automation":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: ui_automation(parameters=args, player=self.ui)
+                )
+                result = r or "Done."
+
+            elif name == "set_mute":
+                muted = args.get("muted", True)
+                self.ui.set_mute(muted)
+                result = "Microphone muted." if muted else "Microphone active."
+
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
@@ -1178,6 +1318,17 @@ class JarvisLive:
             while True:
                 async for response in self.session.receive():
 
+                    # ─── Graceful session rotation ───────────────────────────
+                    # Server sends go_away ~60s before terminating the session
+                    if response.go_away:
+                        print("[JARVIS] 🔄 Server GoAway — rotating session gracefully.")
+                        raise _GoAwayReceived("GoAway")
+
+                    # Store session resumption handle for seamless reconnect
+                    sru = response.session_resumption_update
+                    if sru and sru.resumable and sru.new_handle:
+                        self._session_handle = sru.new_handle
+
                     if response.data:
                         if self._turn_done_event and self._turn_done_event.is_set():
                             self._turn_done_event.clear()
@@ -1253,8 +1404,11 @@ class JarvisLive:
                                 self._loop
                             )
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
-            traceback.print_exc()
+            estr = str(e)
+            # Suppress traceback for known session rotation signals (run() handles the message)
+            if not _WS_CLOSE_RE.search(estr) and "GoAway" not in estr:
+                print(f"[JARVIS] ❌ Recv: {e}")
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):
@@ -1327,8 +1481,14 @@ class JarvisLive:
                     tg.create_task(self._play_audio())
 
             except (errors.APIError, ExceptionGroup) as e:
-                if "1008" in str(e):
-                    print("[JARVIS] 🔄 Session rotated (1008).")
+                # ExceptionGroup's str() doesn't show nested errors, so check inner exceptions
+                if isinstance(e, ExceptionGroup):
+                    is_ws_close = any(_WS_CLOSE_RE.search(str(ex)) for ex in e.exceptions)
+                else:
+                    is_ws_close = bool(_WS_CLOSE_RE.search(str(e)))
+
+                if is_ws_close or "GoAway" in str(e):
+                    print("[JARVIS] 🔄 Session rotated gracefully.")
                 else:
                     print(f"[JARVIS] ⚠️ {e}")
                     traceback.print_exc()

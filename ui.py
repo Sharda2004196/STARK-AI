@@ -19,26 +19,34 @@ from pathlib import Path
 import psutil
 
 try:
+    import winsound
+    _WINSOUND_OK = True
+except ImportError:
+    _WINSOUND_OK = False
+
+try:
     import keyboard
     _KEYBOARD_OK = True
 except ImportError:
     _KEYBOARD_OK = False
+
 
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
     QTimer, QUrl, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
-    QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QAction, QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
+    QIcon, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
     QRadialGradient, QShortcut,
 )
+from PyQt6.QtMultimedia import QSoundEffect
+
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
-    QVBoxLayout, QWidget, QProgressBar,
+    QMainWindow, QMenu, QPushButton, QScrollArea, QSizePolicy,
+    QSystemTrayIcon, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QSoundEffect
 
 # ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -95,27 +103,46 @@ def _init_fonts():
 # ── Audio SFX Manager ─────────────────────────────────────────────────────────
 
 class SFXManager(QObject):
-    """Manages zero-latency UI sound effects."""
+    """UI sound effects — boot via QSoundEffect, clicks via winsound (Win32 native)."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.effects = {}
         sfx_dir = BASE_DIR / "sfx"
-        
-        # Load sounds into memory
-        self._load("startup", sfx_dir / "startup.wav", vol=0.9)
-        self._load("click",   sfx_dir / "click.wav", vol=1.0)
-        self._load("error",   sfx_dir / "error.wav",   vol=0.7)
 
-    def _load(self, name: str, path: Path, vol: float):
-        if path.exists():
-            effect = QSoundEffect(self)
-            effect.setSource(QUrl.fromLocalFile(str(path)))
-            effect.setVolume(vol)
-            self.effects[name] = effect
+        # Boot sound → QSoundEffect (plays before voice starts, no conflict)
+        self._boot = QSoundEffect()
+        boot_path = sfx_dir / "startup.wav"
+        if boot_path.exists():
+            self._boot.setSource(QUrl.fromLocalFile(str(boot_path)))
+        else:
+            mp3s = list(sfx_dir.glob("*.mp3"))
+            if mp3s:
+                self._boot.setSource(QUrl.fromLocalFile(str(mp3s[0])))
+        self._boot.setVolume(0.9)
+
+        # Click / error → winsound (native Win32 API — completely separate audio
+        # subsystem from both Qt Multimedia and PortAudio, so no device conflicts)
+        self._click_path = str(sfx_dir / "click.wav")
+        self._error_path = str(sfx_dir / "error.wav")
 
     def play(self, name: str):
-        if name in self.effects:
-            self.effects[name].play()
+        if name == "startup":
+            self._boot.play()
+        elif name == "click" and _WINSOUND_OK:
+            try:
+                winsound.PlaySound(
+                    self._click_path,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NOSTOP,
+                )
+            except Exception:
+                pass
+        elif name == "error" and _WINSOUND_OK:
+            try:
+                winsound.PlaySound(
+                    self._error_path,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NOSTOP,
+                )
+            except Exception:
+                pass
 
 _SFX = None
 
@@ -1272,7 +1299,8 @@ class SetupOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _state_sig = pyqtSignal(str)
-    _global_mute_sig = pyqtSignal()
+    _hotkey_mute_sig = pyqtSignal()  # F4 hotkey only (triggers tray popup)
+    _mute_ai_sig = pyqtSignal(bool)   # AI voice-command mute toggle (thread-safe)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1337,7 +1365,8 @@ class MainWindow(QMainWindow):
         # thread-safe signals
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
-        self._global_mute_sig.connect(self._toggle_mute)
+        self._hotkey_mute_sig.connect(self._on_hotkey_mute)
+        self._mute_ai_sig.connect(self._on_ai_mute)
 
         # setup overlay
         self._overlay: SetupOverlay | None = None
@@ -1352,9 +1381,12 @@ class MainWindow(QMainWindow):
         if _KEYBOARD_OK:
             try:
                 keyboard.add_hotkey('f4',
-                                    lambda: self._global_mute_sig.emit())
+                                    lambda: self._hotkey_mute_sig.emit())
             except Exception as e:
                 print(f"[UI] ⚠️ Global hotkey registration failed: {e}")
+
+        # ── System Tray Icon ──────────────────────────────────────────────
+        self._init_tray()
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -1847,6 +1879,11 @@ class MainWindow(QMainWindow):
         play_sfx("click")
         self._muted = not self._muted
         self._style_mute_btn()
+        # Keep tray menu text in sync
+        if hasattr(self, '_tray_mute_action'):
+            self._tray_mute_action.setText(
+                "🔇  Unmute" if self._muted else "🎙  Mute"
+            )
         if self._muted:
             self._apply_state("MUTED")
             self._log.append_log("SYS: Microphone muted.")
@@ -1872,6 +1909,122 @@ class MainWindow(QMainWindow):
                 }}
                 QPushButton:hover {{ background: #001f10; }}
             """)
+
+    # ── System tray ─────────────────────────────────────────────────────────────
+
+    def closeEvent(self, event):
+        """Minimize to tray instead of closing the application."""
+        event.ignore()
+        self.hide()
+        self._tray_icon.showMessage(
+            "J.A.R.V.I.S",
+            "Still running in the background, sir.",
+            QSystemTrayIcon.MessageIcon.Information,
+            2000,
+        )
+
+    def _init_tray(self):
+        """Create the system tray icon with a glowing orb icon and context menu."""
+        # Generate a glowing STARK orb icon programmatically (64x64)
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        grad = QRadialGradient(32, 32, 28)
+        grad.setColorAt(0.0, QColor(0, 242, 255, 220))
+        grad.setColorAt(0.6, QColor(0, 180, 220, 160))
+        grad.setColorAt(1.0, QColor(0, 80, 130, 0))
+        painter.setBrush(QBrush(grad))
+        painter.setPen(QPen(QColor(0, 242, 255, 200), 2))
+        painter.drawEllipse(QPointF(32, 32), 26, 26)
+        painter.setPen(QPen(QColor(0, 242, 255, 120), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(32, 32), 18, 18)
+        painter.setFont(QFont(_FONT_HDR, 18, QFont.Weight.Bold))
+        painter.setPen(QPen(QColor(0, 242, 255, 240), 1))
+        painter.drawText(QRectF(0, 0, 64, 64), Qt.AlignmentFlag.AlignCenter, "J")
+        painter.end()
+
+        self._tray_icon = QSystemTrayIcon(QIcon(pixmap), self)
+        self._tray_icon.setToolTip("J.A.R.V.I.S — STARK INDUSTRIES")
+
+        # Build context menu
+        tray_menu = QMenu()
+
+        self._tray_show_action = QAction("Show Window")
+        self._tray_show_action.triggered.connect(self._show_from_tray)
+        tray_menu.addAction(self._tray_show_action)
+
+        tray_menu.addSeparator()
+
+        self._tray_mute_action = QAction("🎙  Mute")
+        self._tray_mute_action.triggered.connect(self._toggle_mute)
+        tray_menu.addAction(self._tray_mute_action)
+
+        tray_menu.addSeparator()
+
+        quit_action = QAction("⏻  Quit JARVIS")
+        quit_action.triggered.connect(self._quit_from_tray)
+        tray_menu.addAction(quit_action)
+
+        self._tray_icon.setContextMenu(tray_menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.show()
+
+    def _show_from_tray(self):
+        """Restore and focus the main window."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        """Restore window on double-click."""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_from_tray()
+
+    def _quit_from_tray(self):
+        """Actually quit — hide tray icon and exit event loop."""
+        self._tray_icon.hide()
+        QApplication.quit()
+
+    def _on_hotkey_mute(self):
+        """Called by F4 global hotkey. Toggles mute and shows tray notification."""
+        self._toggle_mute()
+        if hasattr(self, '_tray_icon'):
+            if self._muted:
+                msg = "Microphone muted. Press F4 to unmute."
+            else:
+                msg = "Microphone active. Press F4 to mute."
+            self._tray_icon.showMessage(
+                "J.A.R.V.I.S — STARK INDUSTRIES",
+                msg,
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+
+    def _on_ai_mute(self, muted: bool):
+        """Called by AI voice command. Sets mute state directly (thread-safe via signal)."""
+        if muted == self._muted:
+            return  # already in requested state
+        self._muted = muted
+        self._style_mute_btn()
+        # Keep tray menu text in sync
+        if hasattr(self, '_tray_mute_action'):
+            self._tray_mute_action.setText(
+                "🔇  Unmute" if muted else "🎙  Mute"
+            )
+        state = "MUTED" if muted else "LISTENING"
+        self._apply_state(state)
+        self._log.append_log(f"SYS: Microphone {'muted' if muted else 'active'} (AI command).")
+        # Show tray notification so user knows the command worked
+        if hasattr(self, '_tray_icon'):
+            msg = "Microphone muted by your command, sir." if muted else "Microphone active again, sir."
+            self._tray_icon.showMessage(
+                "J.A.R.V.I.S",
+                msg,
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
 
     def _send(self):
         txt = self._input.text().strip()
@@ -1998,6 +2151,10 @@ class JarvisUI:
         while not self._win._ready:
             time.sleep(0.1)
         play_sfx("startup")
+
+    def set_mute(self, muted: bool):
+        """Thread-safe mute/unmute from AI tool calls. Emits signal to main thread."""
+        self._win._mute_ai_sig.emit(muted)
 
     def start_speaking(self):
         self.set_state("SPEAKING")

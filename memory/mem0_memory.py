@@ -2,15 +2,130 @@
 # Mem0AI integration for JARVIS — semantic long-term memory
 # Uses Gemini API (existing key) for embeddings + ChromaDB (local file-based) for storage
 # No LLM extraction needed — we use infer=False on all calls
+#
+# V2 improvements:
+#   - JSON backup file for ALL facts (immune to ChromaDB corruption)
+#   - Unicode-safe text sanitization (prevents Rust serialization bugs)
+#   - Startup health check + auto-recovery from backup
+#   - ALL facts included in prompt when ≤ 50 (no more lost via top-10 ceiling)
+#   - Conversation turns stored in backup only (reduces ChromaDB corruption surface)
 
+import json
 import os
+import re
 import threading
+import time
 from pathlib import Path
-from typing import Callable
 
+
+# ── Unicode Sanitizer ─────────────────────────────────────────────────────────
+# ChromaDB's Rust-based storage can corrupt on certain complex Unicode sequences.
+# This sanitizer strips/replaces characters known to trigger serialization bugs
+# while preserving readability.
+
+_SUSPECT_RE = re.compile(
+    r"[\u0000-\u0008\u000b\u000c\u000e-\u001f"  # control chars (except tab/newline)
+    r"\ufffe\uffff"                               # non-characters
+    r"\ufdd0-\ufdef"                              # non-characters
+    r"\u2028\u2029"                               # line/paragraph separators
+    r"\u200b-\u200f\u202a-\u202f\u2060-\u2064"    # zero-width / invisible / bidi
+    r"\ufe00-\ufe0f"                               # variation selectors
+    r"\u0300-\u036f]"                              # combining diacriticals (safe but can cause issues)
+)
+
+
+def _sanitize_text(text: str) -> str:
+    """Remove or replace characters known to cause Rust/ChromaDB serialization issues."""
+    if not text:
+        return text
+    # Step 1: strip suspect characters
+    text = _SUSPECT_RE.sub("", text)
+    # Step 2: normalize Unicode (NFC composes where possible — reduces variability)
+    import unicodedata
+    text = unicodedata.normalize("NFC", text)
+    # Step 3: collapse repeated whitespace
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    return text
+
+
+# ── JSON Backup Layer ─────────────────────────────────────────────────────────
+# Two separate files for durability:
+#   facts_backup.json         — user facts only (small, permanently important)
+#   conversations_backup.json — conversation turns (can grow, pruned at 200)
+
+_BACKUP_DIR = Path(__file__).resolve().parent
+_FACTS_PATH = _BACKUP_DIR / "facts_backup.json"
+_CONVO_PATH = _BACKUP_DIR / "conversations_backup.json"
+
+# Module-level lock for ALL backup file writes (prevents TOCTOU race)
+_backup_lock = threading.Lock()
+
+
+def _atomic_write_json(path: Path, data):
+    """Write JSON to a file atomically: write .tmp then os.replace.
+    
+    This prevents corruption if the process crashes mid-write.
+    os.replace is atomic on Windows (same filesystem).
+    """
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(path)  # atomic on Windows
+
+
+def _read_json(path: Path) -> list[dict]:
+    """Read a JSON list from file. Returns [] on missing/corrupt."""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[Mem0] ⚠️ Read error ({path.name}): {e}")
+        return []
+
+
+def _append_fact_backup(fact: dict):
+    """Append one user-fact dict to facts_backup.json (thread-safe via module lock)."""
+    with _backup_lock:
+        try:
+            existing = _read_json(_FACTS_PATH)
+            existing.append(fact)
+            _atomic_write_json(_FACTS_PATH, existing)
+        except OSError as e:
+            print(f"[Mem0] ⚠️ Fact backup write error: {e}")
+
+
+def _append_conversation_backup(turn: dict):
+    """Append a conversation turn to conversations_backup.json, then prune to max 200."""
+    with _backup_lock:
+        try:
+            existing = _read_json(_CONVO_PATH)
+            existing.append(turn)
+            # Prune oldest turns when over 200
+            if len(existing) > 200:
+                existing = existing[-200:]
+            _atomic_write_json(_CONVO_PATH, existing)
+        except OSError as e:
+            print(f"[Mem0] ⚠️ Conversation backup write error: {e}")
+
+
+# ── Memory Class ──────────────────────────────────────────────────────────────
 
 class Mem0Memory:
     """Wrapper around the mem0ai Memory class for JARVIS.
+    
+    Architecture (V2 — resilient):
+      ┌──────────────────────────────────────────────────┐
+      │  ChromaDB  ←── semantic search, may lose data     │
+      │                                                   │
+      │  facts_backup.json  ←── always complete            │
+      │  (auto-recovered into ChromaDB on startup)         │
+      └──────────────────────────────────────────────────┘
     
     Uses:
     - Embeddings: Gemini API (model: text-embedding-004) — uses existing GOOGLE_API_KEY
@@ -25,7 +140,7 @@ class Mem0Memory:
         self._init_memory()
 
     def _init_memory(self):
-        """Initialize mem0 with Gemini embedder + local ChromaDB."""
+        """Initialize mem0 with Gemini embedder + local ChromaDB, then health-check."""
         try:
             from mem0 import Memory
 
@@ -62,6 +177,10 @@ class Mem0Memory:
             self._memory = Memory.from_config(config)
             self._enabled = True
             print("[Mem0] ✅ Initialized (Gemini embeddings + ChromaDB)")
+
+            # ── Health check + auto-recovery ───────────────────────────
+            self._health_check_and_recover()
+
         except ModuleNotFoundError as e:
             print(f"[Mem0] ⚠️ Missing chromadb package.")
             print(f"[Mem0]   Run: pip install chromadb")
@@ -76,119 +195,262 @@ class Mem0Memory:
         try:
             config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
             if config_path.exists():
-                import json
                 data = json.loads(config_path.read_text(encoding="utf-8"))
                 return data.get("gemini_api_key")
             return None
         except Exception:
             return None
 
+    # ── Health check & recovery ───────────────────────────────────────────────
+
+    def _health_check_and_recover(self):
+        """Compare ChromaDB vs backup counts. If ChromaDB is missing records, re-import from backup."""
+        if not self._enabled or not self._memory:
+            return
+
+        backup_facts = _read_json(_FACTS_PATH)
+        backup_count = len(backup_facts)
+
+        if backup_count == 0:
+            print("[Mem0] ℹ️  No backup facts to verify.")
+            return
+
+        # Try to count how many fact-like records ChromaDB has
+        try:
+            chroma_records = self._memory.get_all(filters={"user_id": "stark"})
+            chroma_count = 0
+            if chroma_records:
+                raw = chroma_records.get("results", chroma_records if isinstance(chroma_records, list) else [])
+                # Only count records that look like our fact format: [category] Key: Value
+                for r in raw:
+                    text = ""
+                    if isinstance(r, str):
+                        text = r
+                    elif isinstance(r, dict):
+                        text = r.get("memory") or r.get("text", "")
+                    if text.startswith("["):
+                        chroma_count += 1
+        except Exception as e:
+            print(f"[Mem0] ⚠️ Health check — cannot read ChromaDB: {e}")
+            chroma_count = -1  # unknown
+
+        if chroma_count < 0:
+            print(f"[Mem0] ⚠️ ChromaDB appears corrupted ({backup_count} facts in backup).")
+            print(f"[Mem0] 🔄 Attempting recovery from backup...")
+            self._recover_from_backup(backup_facts)
+        elif chroma_count < backup_count:
+            missing = backup_count - chroma_count
+            print(f"[Mem0] ⚠️ ChromaDB has {chroma_count} facts, backup has {backup_count}. "
+                  f"Re-importing {missing} missing...")
+            self._recover_from_backup(backup_facts)
+        else:
+            print(f"[Mem0] ✅ Health check passed ({chroma_count} facts, backup={backup_count})")
+
+    def _recover_from_backup(self, facts: list[dict]):
+        """Re-import all facts from backup into ChromaDB, overwriting existing records."""
+        if not self._enabled or not self._memory:
+            return
+
+        imported = 0
+        for fact in facts:
+            try:
+                cat = fact.get("category", "notes")
+                key = fact.get("key", "")
+                val = fact.get("value", "")
+                if not key or not val:
+                    continue
+                if cat == "conversation":
+                    continue  # skip conversation turns
+
+                # Store with infer=False
+                fact_text = f"[{cat}] {key.replace('_', ' ').title()}: {val}"
+                safe_text = _sanitize_text(fact_text)
+
+                self._memory.add(
+                    safe_text,
+                    user_id="stark",
+                    agent_id="jarvis",
+                    infer=False,
+                )
+                imported += 1
+            except Exception as e:
+                print(f"[Mem0] ⚠️ Recovery import error ({fact.get('key', '?')}): {e}")
+
+        print(f"[Mem0] ✅ Recovery complete — re-imported {imported}/{len(facts)} facts")
+
+    # ── Properties ────────────────────────────────────────────────────────────
+
     @property
     def enabled(self) -> bool:
         return self._enabled
 
-    def store_fact(self, category: str, key: str, value: str):
-        """Store an explicit fact extracted from conversation."""
-        if not self._enabled or not self._memory:
-            return
+    # ── Store fact (primary: ChromaDB + JSON backup) ─────────────────────────
 
+    def store_fact(self, category: str, key: str, value: str):
+        """Store an explicit fact extracted from conversation.
+        
+        Writes to BOTH ChromaDB (for semantic search) and JSON backup (durable).
+        """
         if not key.strip() or not value.strip():
             return
 
-        with self._lock:
-            try:
-                fact = f"{key.replace('_', ' ').title()}: {value}"
-                self._memory.add(
-                    f"[{category}] {fact}",
-                    user_id="stark",
-                    agent_id="jarvis",
-                    infer=False,  # Skip LLM extraction, store raw
-                )
-                print(f"[Mem0] 💾 Saved fact: {category}/{key} = {value}")
-            except Exception as e:
-                print(f"[Mem0] ⚠️ store_fact error: {e}")
+        # Sanitize text before storing anywhere
+        safe_category = _sanitize_text(category)
+        safe_key = _sanitize_text(key)
+        safe_value = _sanitize_text(value)
 
-    def store_conversation(self, user_text: str, assistant_text: str):
-        """Store a conversation turn in mem0 for semantic retrieval."""
+        # Always write to JSON backup first (most reliable)
+        fact_record = {
+            "category": safe_category,
+            "key": safe_key,
+            "value": safe_value,
+            "stored_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _append_fact_backup(fact_record)
+
+        # Then try ChromaDB
         if not self._enabled or not self._memory:
+            print(f"[Mem0] 💾 Saved fact to backup only (ChromaDB offline): {safe_category}/{safe_key} = {safe_value}")
             return
 
+        with self._lock:
+            try:
+                fact_text = f"[{safe_category}] {safe_key.replace('_', ' ').title()}: {safe_value}"
+                self._memory.add(
+                    fact_text,
+                    user_id="stark",
+                    agent_id="jarvis",
+                    infer=False,
+                )
+                print(f"[Mem0] 💾 Saved fact: {safe_category}/{safe_key} = {safe_value}")
+            except Exception as e:
+                print(f"[Mem0] ⚠️ store_fact error (backup saved): {e}")
+
+    # ── Store conversation (backup only, no ChromaDB — reduces corruption risk) ─
+
+    def store_conversation(self, user_text: str, assistant_text: str):
+        """Store a conversation turn.
+        
+        V2 change: stored in conversations_backup.json ONLY (not ChromaDB).
+        Conversation turns are high-volume and often contain complex Unicode,
+        which was the root cause of ChromaDB corruption. The backup file handles
+        them safely, and recent turns are included in the system prompt.
+        """
         if not user_text.strip():
             return
 
-        with self._lock:
-            try:
-                # Store as plain text with infer=False — no LLM extraction needed
-                text = user_text.strip()
-                if assistant_text.strip():
-                    text = f"User: {text}\nJarvis: {assistant_text.strip()}"
-                self._memory.add(
-                    text,
-                    user_id="stark",
-                    agent_id="jarvis",
-                    infer=False,  # Skip LLM, just embed and store
-                )
-            except Exception as e:
-                print(f"[Mem0] ⚠️ store_conversation error: {e}")
+        safe_user = _sanitize_text(user_text.strip())
+        safe_assistant = _sanitize_text(assistant_text.strip()) if assistant_text.strip() else ""
+
+        # Truncate very long conversations
+        if len(safe_user) > 2000:
+            safe_user = safe_user[:2000] + " […]"
+        if len(safe_assistant) > 2000:
+            safe_assistant = safe_assistant[:2000] + " […]"
+
+        turn_record = {
+            "category": "conversation",
+            "value": f"User: {safe_user}" + (f"\nJarvis: {safe_assistant}" if safe_assistant else ""),
+            "stored_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _append_conversation_backup(turn_record)
+
+    # ── Retrieval ─────────────────────────────────────────────────────────────
 
     def get_relevant_memories(self, query: str = "") -> list[str]:
-        """Search for semantically relevant memories."""
-        if not self._enabled or not self._memory:
-            return []
+        """Get ALL stored facts + semantically relevant ChromaDB memories.
+        
+        Returns:
+            - ALL user facts from facts_backup.json (up to 50)
+            - Recent conversation turns from conversations_backup.json (last 3)
+            - Plus any additional context from ChromaDB semantic search
+        Combined and deduplicated.
+        """
+        combined: list[str] = []
 
-        search_query = query.strip() or "information about the user"
-        with self._lock:
-            try:
-                response = self._memory.search(
-                    query=search_query,
-                    filters={"user_id": "stark"},
-                )
-                if not response:
-                    return []
+        # ── 1. Always start with ALL facts from facts_backup.json ────────
+        facts_data = _read_json(_FACTS_PATH)
+        seen = set()
+        for fact in facts_data:
+            cat = fact.get("category", "")
+            key = fact.get("key", "")
+            val = fact.get("value", "")
+            if cat == "conversation":
+                continue  # conversations are in a separate file now
+            if key and val:
+                text = f"{key.replace('_', ' ').title()}: {val}"
+                dedup_key = text.lower().strip()
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    combined.append(text)
 
-                # mem0.search() returns a dict: {"results": [...], "query": "..."}
-                # The results list contains dicts with "id", "memory", "score", etc.
-                raw_results = response.get("results", response if isinstance(response, list) else [])
+        # ── 2. Also add recent conversation turns (last 3 from separate file) ─
+        convo_data = _read_json(_CONVO_PATH)
+        conv_count = 0
+        for turn in reversed(convo_data):
+            val = turn.get("value", "")
+            if val:
+                combined.append(val)
+                conv_count += 1
+                if conv_count >= 3:
+                    break
 
-                texts = []
-                for r in raw_results:
-                    if isinstance(r, str):
-                        texts.append(r)
-                    elif isinstance(r, dict):
-                        text = r.get("memory") or r.get("text", "")
-                        if text:
-                            texts.append(text)
-                return texts[:10]  # Limit to 10 most relevant
-            except Exception as e:
-                print(f"[Mem0] ⚠️ search error: {e}")
-                return []
+        # ── 3. Supplement with ChromaDB semantic search if available ────
+        if self._enabled and self._memory:
+            search_query = query.strip() or "information about the user"
+            with self._lock:
+                try:
+                    response = self._memory.search(
+                        query=search_query,
+                        filters={"user_id": "stark"},
+                    )
+                    if response:
+                        raw_results = response.get(
+                            "results",
+                            response if isinstance(response, list) else [],
+                        )
+                        for r in raw_results:
+                            text = ""
+                            if isinstance(r, str):
+                                text = r
+                            elif isinstance(r, dict):
+                                text = r.get("memory") or r.get("text", "")
+                            if text:
+                                dedup_key = text.lower().strip()
+                                if dedup_key not in seen:
+                                    seen.add(dedup_key)
+                                    combined.append(text)
+                except Exception as e:
+                    print(f"[Mem0] ⚠️ search error (falling back to backup only): {e}")
+
+        return combined[:50]  # generous cap — most users have < 50 facts
 
     def get_all_memories(self) -> list[str]:
-        """Get all stored memories for the user."""
-        if not self._enabled or not self._memory:
-            return []
+        """Get ALL stored user facts (non-conversation) from facts_backup.json.
+        
+        ChromaDB is NOT used as primary source because of known corruption issues.
+        The JSON backup is always the complete source of truth.
+        """
+        texts: list[str] = []
 
-        with self._lock:
-            try:
-                response = self._memory.get_all(filters={"user_id": "stark"})
-                if not response:
-                    return []
+        facts_data = _read_json(_FACTS_PATH)
+        seen = set()
+        for fact in facts_data:
+            cat = fact.get("category", "")
+            key = fact.get("key", "")
+            val = fact.get("value", "")
+            if cat == "conversation":
+                continue
+            if key and val:
+                text = f"[{cat}] {key.replace('_', ' ').title()}: {val}"
+                dedup_key = text.lower().strip()
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    texts.append(text)
 
-                # get_all may return a dict with "results" key or a list directly
-                raw_results = response.get("results", response if isinstance(response, list) else [])
+        return texts
 
-                texts = []
-                for r in raw_results:
-                    if isinstance(r, str):
-                        texts.append(r)
-                    elif isinstance(r, dict):
-                        text = r.get("memory") or r.get("text", "")
-                        if text:
-                            texts.append(text)
-                return texts
-            except Exception as e:
-                print(f"[Mem0] ⚠️ get_all error: {e}")
-                return []
+    # ── Formatting ────────────────────────────────────────────────────────────
 
     def format_memories_for_prompt(self, memories: list[str]) -> str:
         """Format retrieved memories into a prompt-friendly string."""
@@ -200,6 +462,8 @@ class Mem0Memory:
             lines.append(f"  • {mem}")
         lines.append("")
         return "\n".join(lines)
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def close(self):
         """Cleanup resources. Call on JARVIS shutdown."""
