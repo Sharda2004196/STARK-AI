@@ -10,6 +10,7 @@
 #   - ALL facts included in prompt when ≤ 50 (no more lost via top-10 ceiling)
 #   - Conversation turns stored in backup only (reduces ChromaDB corruption surface)
 
+import hashlib
 import json
 import os
 import re
@@ -201,56 +202,85 @@ class Mem0Memory:
         except Exception:
             return None
 
-    # ── Health check & recovery ───────────────────────────────────────────────
+    # ── Health check & recovery (V3: hash-based) ───────────────────────────────
+    #
+    # Root cause of the recurring-recovery bug (V2):
+    #   mem0's get_all() has a default top_k=20, which internally fetches only
+    #   the oldest 80 records (fetch_limit = max(20*4, 60) = 80). ChromaDB has
+    #   ~75 old conversation entries (from before V2) that occupy those 80 slots,
+    #   so only 5 original facts were visible. Recovery added 11 more facts, but
+    #   they were the "newest" records — beyond the 80-record window. Next startup,
+    #   the same 5 facts were found, recovery ran again, and duplicates accumulated
+    #   endlessly.
+    #
+    # V3 fix: compute an MD5 hash of the backup file and store it. Recovery runs
+    #   ONLY when the backup actually changes (new fact added/deleted). This is
+    #   immune to the top_k counting bug, immune to ChromaDB corruption, and
+    #   produces zero duplicate accumulation.
 
     def _health_check_and_recover(self):
-        """Compare ChromaDB vs backup counts. If ChromaDB is missing records, re-import from backup."""
+        """Hash-based recovery check. Only re-imports when backup file actually changes."""
         if not self._enabled or not self._memory:
             return
 
         backup_facts = _read_json(_FACTS_PATH)
-        backup_count = len(backup_facts)
-
-        if backup_count == 0:
+        if not backup_facts:
             print("[Mem0] ℹ️  No backup facts to verify.")
             return
 
-        # Try to count how many fact-like records ChromaDB has
-        try:
-            chroma_records = self._memory.get_all(filters={"user_id": "stark"})
-            chroma_count = 0
-            if chroma_records:
-                raw = chroma_records.get("results", chroma_records if isinstance(chroma_records, list) else [])
-                # Only count records that look like our fact format: [category] Key: Value
-                for r in raw:
-                    text = ""
-                    if isinstance(r, str):
-                        text = r
-                    elif isinstance(r, dict):
-                        text = r.get("memory") or r.get("text", "")
-                    if text.startswith("["):
-                        chroma_count += 1
-        except Exception as e:
-            print(f"[Mem0] ⚠️ Health check — cannot read ChromaDB: {e}")
-            chroma_count = -1  # unknown
+        # Compute hash of current backup content
+        backup_hash = hashlib.md5(
+            json.dumps(backup_facts, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
 
-        if chroma_count < 0:
-            print(f"[Mem0] ⚠️ ChromaDB appears corrupted ({backup_count} facts in backup).")
-            print(f"[Mem0] 🔄 Attempting recovery from backup...")
-            self._recover_from_backup(backup_facts)
-        elif chroma_count < backup_count:
-            missing = backup_count - chroma_count
-            print(f"[Mem0] ⚠️ ChromaDB has {chroma_count} facts, backup has {backup_count}. "
-                  f"Re-importing {missing} missing...")
-            self._recover_from_backup(backup_facts)
-        else:
-            print(f"[Mem0] ✅ Health check passed ({chroma_count} facts, backup={backup_count})")
+        # Check if we already recovered for this exact backup state
+        marker_path = _BACKUP_DIR / ".recovery_hash"
+
+        if marker_path.exists():
+            prev_hash = marker_path.read_text().strip()
+            if prev_hash == backup_hash:
+                print(f"[Mem0] ✅ Health check passed ({len(backup_facts)} facts, backup unchanged)")
+                return
+
+        # Backup has changed (or first run) — run recovery
+        print(f"[Mem0] 🔄 Backup changed — syncing {len(backup_facts)} facts to ChromaDB...")
+        self._recover_from_backup(backup_facts)
+
+        # Save hash marker so we don't recover again for the same backup state
+        # Note: if ChromaDB is manually reset (e.g. deleting mem0_data/), delete
+        # the .recovery_hash file to force a fresh re-import on next startup.
+        try:
+            marker_path.write_text(backup_hash)
+        except OSError as e:
+            print(f"[Mem0] ⚠️ Could not save recovery marker: {e}")
 
     def _recover_from_backup(self, facts: list[dict]):
-        """Re-import all facts from backup into ChromaDB, overwriting existing records."""
+        """Clear ChromaDB for this user, then re-import all facts from backup.
+
+        Deletes ALL existing records in ChromaDB for user 'stark' first (to prevent
+        the duplicate accumulation that plagued V2), then fresh-imports every fact
+        from the backup file.
+        """
         if not self._enabled or not self._memory:
             return
 
+        # ── Step 1: Delete all existing ChromaDB records for this user ───
+        try:
+            existing = self._memory.get_all(filters={"user_id": "stark"}, top_k=10000)
+            if existing:
+                raw = existing.get("results", existing if isinstance(existing, list) else [])
+                ids_to_delete = [r["id"] for r in raw if isinstance(r, dict) and r.get("id")]
+                if ids_to_delete:
+                    for mid in ids_to_delete:
+                        try:
+                            self._memory.delete(mid)
+                        except Exception:
+                            pass  # swallow per-item errors
+                    print(f"[Mem0] 🗑️ Cleared {len(ids_to_delete)} existing records from ChromaDB")
+        except Exception as e:
+            print(f"[Mem0] ⚠️ Could not clear ChromaDB (continuing with re-import): {e}")
+
+        # ── Step 2: Fresh-import all facts from backup ───────────────────
         imported = 0
         for fact in facts:
             try:
@@ -260,9 +290,8 @@ class Mem0Memory:
                 if not key or not val:
                     continue
                 if cat == "conversation":
-                    continue  # skip conversation turns
+                    continue  # skip conversation turns (stored in separate file)
 
-                # Store with infer=False
                 fact_text = f"[{cat}] {key.replace('_', ' ').title()}: {val}"
                 safe_text = _sanitize_text(fact_text)
 
@@ -276,7 +305,7 @@ class Mem0Memory:
             except Exception as e:
                 print(f"[Mem0] ⚠️ Recovery import error ({fact.get('key', '?')}): {e}")
 
-        print(f"[Mem0] ✅ Recovery complete — re-imported {imported}/{len(facts)} facts")
+        print(f"[Mem0] ✅ Recovery complete — imported {imported}/{len(facts)} facts")
 
     # ── Properties ────────────────────────────────────────────────────────────
 
