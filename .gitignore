@@ -20,6 +20,8 @@ config/api_keys.json
 # Personal Memory and Data
 memory/long_term.json
 memory/*.json
+memory/mem0_data/
+
 
 # IDEs and Editors
 .vscode/
