@@ -150,11 +150,11 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 git clone https://github.com/yourusername/stark-ai.git
 cd stark-ai
 
-# Install all dependencies
+# Install all Python dependencies
 pip install -r requirements.txt
 
-# (Optional) For memory features — install chromadb
-# Note: chromadb is already included in requirements.txt
+# Download Playwright browser engines (required for browser_control & content_studio)
+playwright install
 ```
 
 ### 3. API Configuration
