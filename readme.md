@@ -52,6 +52,7 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 | **Utilities** | `weather_report` | Gets current weather and forecasts for any location |
 | **Utilities** | `flight_finder` | Searches flights between destinations with pricing |
 | **Utilities** | `reminder` | Sets, lists, and manages reminders with desktop notifications |
+| **Memory** | `save_media_memory` | Analyzes images/audio/video via Gemini, saves description as a permanent text fact with file archive |
 | **Utilities** | `gesture_control` | Controls PC via hand gestures using webcam + MediaPipe |
 | **Utilities** | `attention_monitor` | Monitors user attention — detects if you're away from the screen |
 
@@ -61,6 +62,7 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 - **Gemini embeddings** — Uses `gemini-embedding-2` for high-quality semantic search (3072-dim vectors)
 - **ChromaDB storage** — Local, file-based vector database. No cloud, no server needed
 - **Explicit facts** — Save structured memories with `save_memory` tool (categories like relationships, preferences, notes, tasks)
+- **Media memory** — `save_media_memory` tool analyzes images/audio/video via Gemini AI, saves the description as a text fact, and archives the original file
 - **Auto-conversation** — Each conversation turn is automatically stored and retrievable
 - **Context retrieval** — Relevant memories are loaded at startup and during conversations to personalize responses
 
@@ -407,6 +409,14 @@ Accesses 1000+ third-party apps via Composio SDK.
 - **Requires:** `composio_api_key` in config
 - **Examples:** Send Slack message, create GitHub issue, add Notion page
 
+### Memory
+
+#### `save_media_memory`
+Saves image, audio, or video content descriptions to long-term memory.
+- **Parameters:** `file_path` (path to media file), `description` (optional user hint), `category`
+- **Flow:** Upload to Gemini File API → AI description → stored as text fact + original file archived
+- **Supported formats:** jpg/png/webp/bmp (images), mp3/wav/ogg/m4a (audio), mp4/avi/mov/mkv (video)
+
 ### Utilities
 
 #### `weather_report`
@@ -544,7 +554,8 @@ For complex, multi-step tasks, JARVIS uses an internal agent system:
 │   ├── gesture_control.py       # Hand gesture recognition
 │   ├── attention_monitor.py     # User attention tracking
 │   ├── prompt_optimizer.py      # Prompt optimization
-│   └── notebooklm.py            # NotebookLM research & content generation
+│   ├── notebooklm.py            # NotebookLM research & content generation
+│   └── media_memory.py          # Save image/audio/video descriptions to memory
 │
 ├── agent/                       # Internal task execution system
 │   ├── planner.py               # Task decomposition

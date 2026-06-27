@@ -45,6 +45,7 @@ from actions.video_editing     import video_editing
 from actions.doc_creator       import doc_creator
 from actions.ui_automation    import ui_automation
 from actions.notebooklm       import notebooklm_controller
+from actions.media_memory     import save_media_memory
 try:
     from actions.attention_monitor import AttentionMonitor, handle_call_action, read_event_preview
 except ImportError:
@@ -953,6 +954,39 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "save_media_memory",
+        "description": (
+            "Save an image, audio, or video file's content description to long-term memory. "
+            "Use this when the user says 'save this to memory' while referring to a file "
+            "(photo, screenshot, audio recording, video clip). The tool will:\n"
+            "1. Analyze the file using AI vision/audio understanding\n"
+            "2. Save the description as a text fact in memory\n"
+            "3. Archive a copy of the file to memory/media_memories/ for future reference\n\n"
+            "Supported formats:\n"
+            "  Images: jpg, png, webp, bmp, gif, tiff\n"
+            "  Audio: mp3, wav, ogg, m4a, aac, flac, opus\n"
+            "  Video: mp4, avi, mov, mkv, wmv, flv, webm, m4v, 3gp"
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "file_path": {
+                    "type": "STRING",
+                    "description": "Full path to the media file (image, audio, or video) on your PC"
+                },
+                "description": {
+                    "type": "STRING",
+                    "description": "Optional — brief hint or context from the user about what this file contains"
+                },
+                "category": {
+                    "type": "STRING",
+                    "description": "Optional memory category (default: media_memory)"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
 ]
 
 class _GoAwayReceived(Exception):
@@ -1356,6 +1390,13 @@ class JarvisLive:
                     lambda: ui_automation(parameters=args, player=self.ui)
                 )
                 result = r or "Done."
+
+            elif name == "save_media_memory":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: save_media_memory(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "Media memory saved."
 
             elif name == "set_mute":
                 muted = args.get("muted", True)
