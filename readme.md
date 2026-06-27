@@ -1,4 +1,4 @@
-# 🤖 STARK AI (J.A.R.V.I.S)
+# 🛡️ STARK AI (J.A.R.V.I.S)
 
 ### The Ultimate Cross-Platform Personal AI Assistant
 **Developed by Sharda Vatsal Bhat (SVB)**
