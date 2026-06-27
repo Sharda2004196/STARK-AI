@@ -18,7 +18,7 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 - Voice activity-based muting (audio paused during tool execution)
 - Configurable microphone and speaker devices
 
-### 🤖 25+ Action Modules
+### 🤖 26+ Action Modules
 
 | Category | Action | Description |
 |----------|--------|-------------|
@@ -26,6 +26,7 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 | **Code** | `code_helper` | Writes, edits, debugs code files with AI-powered analysis |
 | **Code** | `dev_agent` | Full dev agent — plans, implements, and tests features autonomously |
 | **Code** | `prompt_optimizer` | Optimizes and restructures prompts for better AI responses |
+| **Research** | `notebooklm` | AI-powered research via Google NotebookLM — add sources, generate audio/video/reports, run deep research, and query notebooks via chat |
 | **Web** | `web_search` | Searches the web and returns structured results with summaries |
 | **Web** | `browser_control` | Controls Chrome browser — navigate, click, type, extract content |
 | **File System** | `file_controller` | Creates, renames, moves, copies, deletes files and folders |
@@ -37,6 +38,7 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 | **System** | `computer_settings` | Adjusts system settings — volume, brightness, Wi-Fi, Bluetooth |
 | **System** | `open_app` | Launches applications by name (Chrome, VSCode, Spotify, etc.) |
 | **System** | `desktop` | Manages windows — minimize, maximize, close, switch, arrange |
+| **System** | `ui_automation` | Interacts with ANY desktop app by visible label via Windows UIAutomation — click buttons, type into fields, read text, list controls |
 | **Multimedia** | `image_generation` | Generates images via AI models (local or API-based generation) |
 | **Multimedia** | `video_editing` | Edits videos — trim, concatenate, add effects, transitions |
 | **Multimedia** | `content_studio` | Creates full content packs — thumbnails, captions, descriptions, scripts |
@@ -71,6 +73,18 @@ STARK AI (J.A.R.V.I.S) is a voice-controlled AI personal assistant built on **Go
 - **Sound effects** — startup chime, click sounds, error alerts (`sfx/` folder)
 - **Mute toggle** — press `F4` to mute/unmute the microphone
 - **Drag-and-drop** — file upload via drag-drop zone or file browser dialog
+
+### 📚 NotebookLM Integration
+
+JARVIS integrates with **Google NotebookLM** — Google's AI-powered research and content generation platform — via the unofficial `notebooklm-py` Python library.
+
+- **Research** — Run fast or deep web research on any topic; results are grounded in sources
+- **Source Management** — Add URLs, files (PDF/DOCX), pasted text, or Google Drive documents as sources
+- **Content Generation** — Generate Audio Overviews (podcasts), videos, cinematic videos, reports, quizzes, flashcards, infographics, slide decks, data tables, and mind maps
+- **Grounded Chat** — Ask questions about your sources with citations
+- **Download** — Download generated artifacts (audio, video, quizzes, reports, etc.) to local files
+
+> **Note:** Requires a Google account with access to [NotebookLM](https://notebooklm.google.com/). Authenticate once via `notebooklm login`.
 
 ### 🏗️ Agent Architecture
 
@@ -155,7 +169,16 @@ pip install -r requirements.txt
 
 # Download Playwright browser engines (required for browser_control & content_studio)
 playwright install
+
+# Install NotebookLM Python API with browser auth support
+# (uses your existing Playwright installation, does NOT reinstall it)
+pip install "notebooklm-py[browser]" 
+
+# Authenticate NotebookLM with your Google account (required once)
+notebooklm login
 ```
+
+> **Note:** `notebooklm login` opens a browser window to sign in with your Google account (the same one that has access to NotebookLM at notebooklm.google.com). After authentication, credentials are stored in `~/.notebooklm/`.
 
 ### 3. API Configuration
 
@@ -241,6 +264,22 @@ Full autonomous development agent — plans, implements, tests, and refactors.
 Restructures and enhances prompts for better AI responses.
 - **Parameters:** `prompt` (raw prompt), `target_model` (optional: gpt, claude, gemini)
 - **Optimizations:** Clarity, structure, specificity, constraints
+
+### Research & AI
+
+#### `notebooklm`
+Integrates with Google NotebookLM for AI-powered research, content generation, and grounded knowledge management.
+- **Parameters:** `action` (notebooks: list/create/delete/get), (sources: add_url/add_file/add_text/list), (research: ask/add_web_research), (generate: audio/video/quiz/report/infographic/slide_deck/mind_map/data_table), (download)
+- **Authentication:** Requires `notebooklm login` (one-time browser sign-in with Google account)
+- **Features:** Fast & deep web research, add URLs/files/text as sources, generate audio overviews, videos, reports, quizzes, flashcards, infographics, mind maps, and more
+
+### UI Automation (Windows)
+
+#### `ui_automation`
+Interacts with desktop applications by reading the actual Windows UI element tree (same API screen readers use).
+- **Parameters:** `action` (click/list_controls/find_window/double_click/right_click/type_text/get_text/invoke/screenshot), `window`, `description` (element label), `ctrl_type`, `text`
+- **Features:** Click buttons by visible label, type into text fields, read text from UI elements, discover all controls in a window, fallback to vision-based clicking if UIA fails
+- **Windows only** — uses `comtypes` + `uiautomation` libraries
 
 ### Web & Browsing
 
@@ -504,7 +543,8 @@ For complex, multi-step tasks, JARVIS uses an internal agent system:
 │   ├── reminder.py              # Reminder system
 │   ├── gesture_control.py       # Hand gesture recognition
 │   ├── attention_monitor.py     # User attention tracking
-│   └── prompt_optimizer.py      # Prompt optimization
+│   ├── prompt_optimizer.py      # Prompt optimization
+│   └── notebooklm.py            # NotebookLM research & content generation
 │
 ├── agent/                       # Internal task execution system
 │   ├── planner.py               # Task decomposition
@@ -572,6 +612,7 @@ This project is for personal and educational use. All dependencies and APIs are 
 - **ChromaDB** — Local vector database
 - **Playwright** — Reliable browser automation
 - **Composio** — Third-party app integrations
+- **notebooklm-py** — Unofficial NotebookLM Python API
 
 ---
 

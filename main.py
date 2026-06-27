@@ -44,6 +44,7 @@ from actions.composio_tools    import JarvisToolManager
 from actions.video_editing     import video_editing
 from actions.doc_creator       import doc_creator
 from actions.ui_automation    import ui_automation
+from actions.notebooklm       import notebooklm_controller
 try:
     from actions.attention_monitor import AttentionMonitor, handle_call_action, read_event_preview
 except ImportError:
@@ -677,6 +678,131 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "notebooklm",
+        "description": (
+            "Integrates with Google NotebookLM for AI-powered research, "
+            "content generation, and grounded knowledge management.\n\n"
+            "REQUIRES: Run 'notebooklm login' in terminal once to authenticate.\n\n"
+            "NOTEBOOK OPERATIONS:\n"
+            "  - list_notebooks\n"
+            "  - create_notebook (title)\n"
+            "  - delete_notebook (notebook_id)\n"
+            "  - get_notebook (notebook_id)\n\n"
+            "SOURCE OPERATIONS:\n"
+            "  - add_source_url (notebook_id, url)\n"
+            "  - add_source_file (notebook_id, file_path)\n"
+            "  - add_source_text (notebook_id, title, content)\n"
+            "  - add_web_research (notebook_id, query, mode=fast|deep)\n"
+            "  - list_sources (notebook_id)\n\n"
+            "CHAT:\n"
+            "  - ask (notebook_id, query)\n\n"
+            "CONTENT GENERATION:\n"
+            "  - generate_audio (notebook_id, instructions)\n"
+            "  - generate_video (notebook_id, instructions, style)\n"
+            "  - generate_cinematic_video (notebook_id, instructions)\n"
+            "  - generate_quiz (notebook_id, difficulty, quantity)\n"
+            "  - generate_flashcards (notebook_id, quantity)\n"
+            "  - generate_slide_deck (notebook_id, instructions)\n"
+            "  - generate_report (notebook_id, format, instructions)\n"
+            "  - generate_infographic (notebook_id, orientation, detail)\n"
+            "  - generate_data_table (notebook_id, instructions)\n"
+            "  - generate_mind_map (notebook_id, kind)\n\n"
+            "DOWNLOAD:\n"
+            "  - download (notebook_id, artifact_type, output_path, format)\n\n"
+            "UTILITIES:\n"
+            "  - list_artifacts (notebook_id)\n"
+            "  - status"
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "The NotebookLM operation to perform.\n"
+                        "Notebooks: list_notebooks | create_notebook | delete_notebook | get_notebook\n"
+                        "Sources: add_source_url | add_source_file | add_source_text | add_web_research | list_sources\n"
+                        "Chat: ask\n"
+                        "Generate: generate_audio | generate_video | generate_cinematic_video | "
+                        "generate_quiz | generate_flashcards | generate_slide_deck | generate_report | "
+                        "generate_infographic | generate_data_table | generate_mind_map\n"
+                        "Download: download\n"
+                        "Utility: list_artifacts | status"
+                    )
+                },
+                "notebook_id": {
+                    "type": "STRING",
+                    "description": "ID of the NotebookLM notebook (returned by create_notebook or list_notebooks)"
+                },
+                "title": {
+                    "type": "STRING",
+                    "description": "Title for create_notebook or add_source_text"
+                },
+                "url": {
+                    "type": "STRING",
+                    "description": "URL to add as a source (for add_source_url)"
+                },
+                "file_path": {
+                    "type": "STRING",
+                    "description": "Path to a file to add as a source (PDF, text, etc.)"
+                },
+                "content": {
+                    "type": "STRING",
+                    "description": "Text content for add_source_text"
+                },
+                "query": {
+                    "type": "STRING",
+                    "description": "Question/research query for ask or add_web_research"
+                },
+                "instructions": {
+                    "type": "STRING",
+                    "description": "Instructions/prompt for content generation"
+                },
+                "mode": {
+                    "type": "STRING",
+                    "description": "Research mode: fast (quick) or deep (thorough)"
+                },
+                "style": {
+                    "type": "STRING",
+                    "description": "Video style: explainer | brief | cinematic"
+                },
+                "difficulty": {
+                    "type": "STRING",
+                    "description": "Quiz difficulty: easy | medium | hard"
+                },
+                "quantity": {
+                    "type": "INTEGER",
+                    "description": "Number of quiz questions or flashcards to generate"
+                },
+                "format": {
+                    "type": "STRING",
+                    "description": "Report format: briefing-doc | study-guide | blog-post | custom | For download: json | markdown | html"
+                },
+                "orientation": {
+                    "type": "STRING",
+                    "description": "Infographic orientation: landscape | portrait | square"
+                },
+                "detail": {
+                    "type": "STRING",
+                    "description": "Infographic detail level: low | medium | high"
+                },
+                "kind": {
+                    "type": "STRING",
+                    "description": "Mind map kind: interactive | note-backed"
+                },
+                "artifact_type": {
+                    "type": "STRING",
+                    "description": "Download type: audio | video | quiz | flashcards | slide-deck | infographic | report | mind-map | data-table"
+                },
+                "output_path": {
+                    "type": "STRING",
+                    "description": "File path to save the downloaded artifact"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "set_mute",
         "description": (
             "Mutes or unmutes the microphone. "
@@ -1216,6 +1342,13 @@ class JarvisLive:
                             result = "No active meeting analysis to stop."
                 else:
                     result = "Meeting analyzer module not loaded."
+
+            elif name == "notebooklm":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: notebooklm_controller(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "Done."
 
             elif name == "ui_automation":
                 r = await loop.run_in_executor(
