@@ -170,7 +170,7 @@ pip install -r requirements.txt
 # Download Playwright browser engines (required for browser_control & content_studio)
 playwright install
 
-# Install NotebookLM Python API with browser auth support
+# Install NotebookLM Python API with browser auth support (optional but recommended)
 # (uses your existing Playwright installation, does NOT reinstall it)
 pip install "notebooklm-py[browser]" 
 
@@ -188,7 +188,7 @@ Create `config/api_keys.json` with your API keys:
 {
     "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
     "opencode_zen_api_key": "YOUR_OPENCODE_ZEN_API_KEY_HERE (Optional)",
-    "composio_api_key": "YOUR_COMPOSIO_API_KEY",
+    "composio_api_key": "YOUR_COMPOSIO_API_KEY (Optional)",
      "os_system": "windows"
 }
 ```
