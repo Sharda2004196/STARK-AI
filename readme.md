@@ -500,6 +500,7 @@ For complex, multi-step tasks, JARVIS uses an internal agent system:
 │   ├── composio_tools.py        # Third-party app integrations
 │   ├── weather_report.py        # Weather data
 │   ├── flight_finder.py         # Flight search
+│   ├── ui_automation.py         # Desktop automations
 │   ├── reminder.py              # Reminder system
 │   ├── gesture_control.py       # Hand gesture recognition
 │   ├── attention_monitor.py     # User attention tracking
