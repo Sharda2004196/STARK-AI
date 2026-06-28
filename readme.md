@@ -153,7 +153,7 @@ JARVIS integrates with **Google NotebookLM** — Google's AI-powered research an
 
 | Requirement | Version |
 |------------|---------|
-| Python | 3.10+ |
+| Python | 3.11 or 3.12 |
 | Operating System | Windows 10/11 (primary), Linux/macOS (experimental) |
 | Google Gemini API Key | [Get one free](https://aistudio.google.com/apikey) |
 | Microphone & Speaker | Required for voice interaction |
