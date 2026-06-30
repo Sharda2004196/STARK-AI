@@ -2,6 +2,7 @@ import asyncio
 import re
 import threading
 import json
+from collections import deque
 import sys
 import traceback
 from pathlib import Path
@@ -804,6 +805,62 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "get_meeting_analysis",
+        "description": (
+            "Returns the latest meeting/screen analysis from the meeting_analyzer. "
+            "Call this when the user asks what is happening on screen, what the meeting "
+            "is about, or what you analyzed from the screen. "
+            "The analysis includes RICH VISUAL DETAILS: on-screen text, channel names, "
+            "prices, numbers, branding, UI elements, and any visible content. "
+            "Returns a JSON object with: summary, answer, speech, status. "
+            "If no analysis is available yet, returns 'No analysis yet.'"
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+        }
+    },
+    {
+        "name": "attention_monitor",
+        "description": (
+            "Starts or stops background monitoring of Windows notifications "
+            "and incoming calls. When running, JARVIS watches for:\n"
+            "  - Incoming calls on WhatsApp, Zoom, Teams, Skype, Telegram, etc.\n"
+            "  - New messages and notifications from any app\n"
+            "  - Call/meeting windows that pop up\n"
+            "JARVIS will PROACTIVELY alert you about incoming calls. "
+            "For messages, ask 'any notifications?' afterwards. "
+            "Use 'start' to begin monitoring, 'stop' to end it."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "start | stop"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "get_notifications",
+        "description": (
+            "Returns recent notifications and events detected by the background "
+            "attention monitor. Call this when the user asks:\n"
+            "  - 'Did I get any messages?'\n"
+            "  - 'Any notifications?'\n"
+            "  - 'Who messaged me?'\n"
+            "  - 'What did I miss?'\n"
+            "Returns a JSON array of recent events with app, kind, preview, "
+            "and timestamp. Returns 'No notifications yet' if empty."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+        }
+    },
+    {
         "name": "set_mute",
         "description": (
             "Mutes or unmutes the microphone. "
@@ -1018,8 +1075,73 @@ class JarvisLive:
         # ─── Session resumption (graceful GoAway handling) ───────────
         self._session_handle: str | None = None
 
+        # ─── Latest meeting analysis (injected into Live session) ────
+        self._meeting_analysis: dict | None = None
+
+        # ─── Attention Monitor (notification + call watcher) ────────
+        self._attention_monitor: AttentionMonitor | None = None
+        self._attention_events: deque = deque(maxlen=20)
+
         # ─── Mem0AI Semantic Memory ─────────────────────────────────────
         self.mem0 = Mem0Memory()
+
+    def _on_meeting_update(self, payload: dict):
+        """Called by MeetingAssistant when a new analysis is ready.
+        Logs to UI and stores on self for tool-based access.
+        Does NOT inject into the Live session — that would make the model
+        respond verbally every 5 seconds and exhaust the API quota.
+        Instead, the model calls get_meeting_analysis on demand."""
+        summary = payload.get('summary', '')
+
+        # Log to UI
+        self.ui.write_log(f"[Meeting] {summary}")
+
+        # Store latest analysis for get_meeting_analysis tool
+        self._meeting_analysis = payload
+
+    # ── Attention Monitor ───────────────────────────────────────────────
+
+    def _inject_realtime_input(self, text: str):
+        """Thread-safe injection of text into the Live session.
+        Respects the tool-response gate to avoid 1007 errors."""
+        if not self._loop or not self.session:
+            return
+        with self._tool_gate_lock:
+            if self._tool_response_pending:
+                self._pending_text.append(text)
+                return
+        asyncio.run_coroutine_threadsafe(
+            self.session.send_realtime_input(text=text),
+            self._loop
+        )
+
+    def _on_attention_event(self, event: dict):
+        """Called by AttentionMonitor when a notification or call is detected.
+        Stores events (full details accessible via get_notifications tool),
+        logs sender name to UI, and speaks only the sender/caller name aloud
+        — never the message content (privacy: no personal data sent to cloud)."""
+        kind = event.get("kind", "message")
+        app = event.get("app", "unknown")
+        title = event.get("title", "")  # sender/caller name only
+
+        # Store full event for later retrieval via get_notifications
+        self._attention_events.append(event)
+
+        # Log to UI — sender/app name only, never message content
+        self.ui.write_log(f"[Attention] {kind.upper()} \u2014 {app}: {title or '(unknown)'}")
+
+        # Build alert — speak sender/caller name only, never message content
+        display = title if title else app
+
+        if kind == "call":
+            # Detect voice vs video locally (privacy-safe — keyword check on-device)
+            raw = event.get("preview", "") or event.get("raw", "") or ""
+            call_type = "video call" if "video" in raw.lower() else "voice call"
+            alert = f"[ATTENTION EVENT] Incoming {call_type} on {app} from {display}"
+        else:
+            alert = f"[ATTENTION EVENT] New message from {display} on {app}"
+
+        self._inject_realtime_input(alert)
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -1365,15 +1487,32 @@ class JarvisLive:
                 if MeetingAssistant:
                     action = args.get("action", "start")
                     if action == "start":
-                        self.meeting_assistant = MeetingAssistant(self.ui, self.speak)
-                        self.meeting_assistant.start(args.get("title", "Meeting"), args.get("context", ""))
+                        self.meeting_assistant = MeetingAssistant(
+                            on_update=self._on_meeting_update,
+                            on_state=lambda state: self.ui.write_log(
+                                f"[Meeting] State: {state}"
+                            ),
+                            client=self._client,
+                        )
+                        self.meeting_assistant.start(title=args.get("title", "Meeting"), context=args.get("context", ""))
                         result = "Meeting analysis started."
-                    else:
+                    elif action == "update_context":
+                        if hasattr(self, 'meeting_assistant'):
+                            self.meeting_assistant.update_context(
+                                title=args.get("title"),
+                                context=args.get("context"),
+                            )
+                            result = "Meeting context updated."
+                        else:
+                            result = "No active meeting analysis to update."
+                    elif action == "stop":
                         if hasattr(self, 'meeting_assistant'):
                             self.meeting_assistant.stop()
                             result = "Meeting analysis stopped."
                         else:
                             result = "No active meeting analysis to stop."
+                    else:
+                        result = f"Unknown meeting_analyzer action: {action}"
                 else:
                     result = "Meeting analyzer module not loaded."
 
@@ -1397,6 +1536,48 @@ class JarvisLive:
                     lambda: save_media_memory(parameters=args, player=self.ui, speak=self.speak)
                 )
                 result = r or "Media memory saved."
+
+            elif name == "get_meeting_analysis":
+                if self._meeting_analysis:
+                    result = json.dumps(self._meeting_analysis, ensure_ascii=False)
+                else:
+                    result = "No analysis yet. Meeting analyzer may not be running."
+
+            elif name == "attention_monitor":
+                action = args.get("action", "start")
+                if action == "start":
+                    if AttentionMonitor:
+                        if self._attention_monitor is None:
+                            self._attention_monitor = AttentionMonitor(
+                                on_event=self._on_attention_event,
+                                interval=2.0,
+                            )
+                            self._attention_monitor.start()
+                            result = "Attention monitor started. I will now watch for incoming calls and notifications."
+                        else:
+                            result = "Attention monitor is already running."
+                    else:
+                        result = "Attention monitor module not available on this system."
+                elif action == "stop":
+                    if self._attention_monitor:
+                        self._attention_monitor.stop()
+                        self._attention_monitor = None
+                        result = "Attention monitor stopped."
+                    else:
+                        result = "Attention monitor is not running."
+                else:
+                    result = f"Unknown attention_monitor action: {action}"
+
+            elif name == "get_notifications":
+                if self._attention_events:
+                    # Strip preview/raw content — never expose message body to cloud API
+                    safe_events = []
+                    for ev in self._attention_events:
+                        safe = {k: v for k, v in ev.items() if k not in ("preview", "raw")}
+                        safe_events.append(safe)
+                    result = json.dumps(safe_events, ensure_ascii=False, default=str)
+                else:
+                    result = "No notifications detected yet. Make sure attention_monitor is running first."
 
             elif name == "set_mute":
                 muted = args.get("muted", True)
@@ -1623,7 +1804,7 @@ class JarvisLive:
             stream.close()
 
     async def run(self):
-        client = genai.Client(
+        self._client = genai.Client(
             api_key=_get_api_key(),
             http_options={"api_version": "v1beta"}
         )
@@ -1635,13 +1816,13 @@ class JarvisLive:
                 config = self._build_config()
 
                 async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
+                    self._client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session        = session
                     self._loop          = asyncio.get_event_loop()
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=10)
+                    self.out_queue      = asyncio.Queue(maxsize=50)
                     self._turn_done_event = asyncio.Event()
 
                     print("[JARVIS] ✅ Connected.")
